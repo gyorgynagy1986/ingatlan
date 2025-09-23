@@ -16,7 +16,6 @@ import {
 } from "lucide-react";
 import {
   sendVerificationCodeAction,
- // verifyCodeAction,
 } from "../../../lib/action/auth";
 
 import RegisterImage from "../../../../public/assets/cover.jpg";
@@ -32,7 +31,7 @@ export default function SignIn() {
   const router = useRouter();
   const searchParams = useSearchParams();
   
-  const { data: session, status } = useSession();
+  const { data: session, status, update } = useSession();
 
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -84,6 +83,17 @@ export default function SignIn() {
       setEmail(emailParam);
     }
   }, [searchParams]);
+
+  // Átirányítás ha már be vagyunk jelentkezve
+  useEffect(() => {
+    if (status === "authenticated" && session) {
+      const callbackUrl = searchParams.get("callbackUrl");
+      // Egy kis késleltetés, hogy a UI átmenet simább legyen
+      setTimeout(() => {
+        router.push(callbackUrl || "/dashboard");
+      }, 500);
+    }
+  }, [status, session, router, searchParams]);
 
   const handleRequestCode = async (
     e?: React.FormEvent<HTMLFormElement>
@@ -149,9 +159,21 @@ export default function SignIn() {
             result.error ||
             "Nem sikerült a bejelentkezés. Kérjük, próbálja újra.",
         });
-      } else {
-        // Sikeres bejelentkezés -> átirányítás
-        router.push("/dashboard");
+      } else if (result?.ok) {
+        // Sikeres bejelentkezés
+        setMessage({
+          type: "success",
+          text: "Sikeres bejelentkezés! Átirányítás...",
+        });
+        
+        // Session frissítése
+        await update();
+        
+        // Egy kis várakozás a jobb UX-ért
+        setTimeout(() => {
+          const callbackUrl = searchParams.get("callbackUrl") || "/dashboard";
+          router.push(callbackUrl);
+        }, 1000);
       }
     } catch (error) {
       console.error("Verification error:", error);
@@ -164,19 +186,19 @@ export default function SignIn() {
     }
   };
 
-  // Ha be vagyunk jelentkezve, ne mutassuk a formot
-  useEffect(() => {
-    if (status === "authenticated" && session) {
-      const callbackUrl = searchParams.get("callbackUrl");
-      if (callbackUrl) {
-        router.push(callbackUrl);
-      } else {
-        router.push("/dashboard");
-      }
-    }
-  }, [status, session, router, searchParams]);
+  // Loading állapot
+  if (status === "loading") {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100">
+        <div className="text-center">
+          <RefreshCw className="animate-spin h-8 w-8 text-indigo-600 mx-auto mb-4" />
+          <p className="text-gray-600">Betöltés...</p>
+        </div>
+      </div>
+    );
+  }
 
-  // Ha már be van jelentkezve:
+  // Ha már be van jelentkezve, mutasson egy átmeneti üzenetet
   if (status === "authenticated" && session) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100 px-4 py-12 sm:px-6 lg:px-8">
@@ -206,52 +228,28 @@ export default function SignIn() {
                   <line x1="14" y1="1" x2="14" y2="4"></line>
                 </svg>
               </span>
-              <span className="text-2xl font-bold text-gray-900">Bukio</span>
+              <span className="text-2xl font-bold text-gray-900">Ingatlan</span>
             </Link>
           </div>
 
           <div className="bg-white shadow-xl rounded-xl overflow-hidden">
             <div className="p-8 text-center">
-              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-100 text-green-600 mb-4">
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-100 text-green-600 mb-4 animate-pulse">
                 <CheckCircle size={28} />
               </div>
               <h1 className="text-2xl font-bold text-gray-900 mb-2">
-                Már be van jelentkezve
+                Sikeres bejelentkezés!
               </h1>
               <p className="text-gray-600 mb-6">
-                Ön már be van jelentkezve mint{" "}
-                <span className="font-medium">{session.user?.email}</span>
+                Átirányítás folyamatban...
               </p>
               <div className="space-y-4">
-                <Link
-                  href="/dashboard"
-                  className="block w-full py-3 px-4 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:ring-offset-2 transition-colors duration-200"
-                >
-                  Tovább a vezérlőpultra
-                </Link>
-                <button
-                  onClick={() =>
-                    signOut({ redirect: false }).then(() => router.push("/"))
-                  }
-                  className="block w-full py-3 px-4 rounded-lg bg-gray-100 text-gray-700 text-sm font-medium hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 transition-colors duration-200"
-                >
-                  Kijelentkezés
-                </button>
+                <div className="flex items-center justify-center">
+                  <RefreshCw className="animate-spin h-5 w-5 text-indigo-600" />
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Még tölt a session
-  if (status === "loading") {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100">
-        <div className="text-center">
-          <RefreshCw className="animate-spin h-8 w-8 text-indigo-600 mx-auto mb-4" />
-          <p className="text-gray-600">Betöltés...</p>
         </div>
       </div>
     );
@@ -353,7 +351,7 @@ export default function SignIn() {
                   <line x1="14" y1="1" x2="14" y2="4"></line>
                 </svg>
               </span>
-              <span className="text-2xl font-bold text-gray-900">Bukio</span>
+              <span className="text-2xl font-bold text-gray-900">Ingatlan</span>
             </Link>
           </div>
 

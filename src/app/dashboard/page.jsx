@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
+import useSWR from "swr";
 import {
   ChevronLeft,
   ChevronRight,
@@ -44,89 +45,109 @@ function cn(...classes) {
   return classes.filter(Boolean).join(" ");
 }
 
-const AdminPropertiesPage = () => {
-  const [properties, setProperties] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pagination, setPagination] = useState(null);
+// SWR fetcher függvény
+const fetcher = async (url) => {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error('Hiba történt az adatok lekérésekor');
+  }
+  const data = await response.json();
+  if (!data.success) {
+    throw new Error(data.error || 'Ismeretlen hiba történt');
+  }
+  return data;
+};
 
-  // Adatok betöltése
-  const fetchProperties = async (page = 1, searchId = "", filters = {}) => {
-    setLoading(true);
-    setError(null);
-
-    try {
-      const params = new URLSearchParams();
-      params.append("page", page.toString());
+// URL generáló függvény a keresési paraméterekhez
+const buildUrl = (page, searchId, filters) => {
+  const params = new URLSearchParams();
+  params.append("page", page.toString());
+  
+  // ID alapú keresés
+  if (searchId?.trim()) {
+    params.append("id", searchId.trim());
+  }
+  
+  // Szűrők hozzáadása
+  Object.entries(filters || {}).forEach(([key, value]) => {
+    if (value && value.toString().trim()) {
+      // Backend kompatibilis kulcs nevek
+      let apiKey = key;
+      if (key === 'partOwnership') apiKey = 'part_ownership';
+      if (key === 'newBuild') apiKey = 'new_build';
+      if (key === 'energyRating') apiKey = 'energy_rating';
+      if (key === 'minSurface') apiKey = 'min_surface_area';
+      if (key === 'maxSurface') apiKey = 'max_surface_area';
       
-      // ID alapú keresés
-      if (searchId.trim()) {
-        params.append("id", searchId.trim());
-      }
-      
-      // Szűrők hozzáadása
-      Object.entries(filters).forEach(([key, value]) => {
-        if (value && value.toString().trim()) {
-          // Backend kompatibilis kulcs nevek
-          let apiKey = key;
-          if (key === 'partOwnership') apiKey = 'part_ownership';
-          if (key === 'newBuild') apiKey = 'new_build';
-          if (key === 'energyRating') apiKey = 'energy_rating';
-          if (key === 'minSurface') apiKey = 'min_surface_area';
-          if (key === 'maxSurface') apiKey = 'max_surface_area';
-          
-          params.append(apiKey, value.toString().trim());
-        }
-      });
-
-      const response = await fetch(`/api/admin/properties?${params}`);
-      const data = await response.json();
-
-      if (data.success) {
-        setProperties(Array.isArray(data.data) ? data.data : []);
-        setPagination(data.pagination);
-        setCurrentPage(data.pagination?.currentPage ?? page);
-      } else {
-        setError(data.error || "Ismeretlen hiba történt");
-      }
-    } catch (err) {
-      setError("Hiba az adatok betöltésénél");
-    } finally {
-      setLoading(false);
+      params.append(apiKey, value.toString().trim());
     }
-  };
+  });
 
-  // Első betöltés
-  useEffect(() => {
-    fetchProperties();
-  }, []);
+  return `/api/admin/properties?${params}`;
+};
+
+const AdminPropertiesPage = () => {
+  const [currentPage, setCurrentPage] = useState(1);
+  const [searchId, setSearchId] = useState("");
+  const [filters, setFilters] = useState({});
+
+  // SWR hook
+  const { data, error, isLoading, mutate } = useSWR(
+    buildUrl(currentPage, searchId, filters),
+    fetcher,
+    {
+      // SWR opciók
+      revalidateOnFocus: false, // Ne töltse újra fókuszváltáskor
+      revalidateOnReconnect: false, // Ne töltse újra újracsatlakozáskor
+      keepPreviousData: true, // Tartsa meg az előző adatokat új lekérés közben
+    }
+  );
+
+  const properties = data?.data || [];
+  const pagination = data?.pagination || null;
 
   // Keresés kezelése (PropertySearch komponensből)
-  const handleSearch = (searchId, filters) => {
+  const handleSearch = (newSearchId, newFilters) => {
+    setSearchId(newSearchId);
+    setFilters(newFilters);
     setCurrentPage(1);
-    fetchProperties(1, searchId, filters);
   };
 
   // Oldal váltás
   const handlePageChange = (newPage) => {
     if (!pagination) return;
     const safe = Math.max(1, Math.min(newPage, pagination.totalPages));
-    // Itt kellene a jelenlegi keresési paramétereket is továbbadni
-    fetchProperties(safe);
+    setCurrentPage(safe);
+  };
+
+  // Kézi frissítés
+  const handleRefresh = () => {
+    mutate();
   };
 
   return (
     <TooltipProvider>
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-100 dark:from-slate-900 dark:via-slate-950 dark:to-slate-900">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-     
+          {/* Fejléc frissítés gombbal */}
+          <div className="mb-6 flex items-center justify-between">
+            <h1 className="text-2xl font-bold">Ingatlanok kezelése</h1>
+            <Button
+              onClick={handleRefresh}
+              variant="outline"
+              size="sm"
+              disabled={isLoading}
+            >
+              <RefreshCw className={cn("h-4 w-4 mr-2", isLoading && "animate-spin")} />
+              Frissítés
+            </Button>
+          </div>
 
           {/* PropertySearch komponens */}
           <div className="mb-6">
             <PropertySearch 
               onSearch={handleSearch}
-              loading={loading}
+              loading={isLoading}
               resultCount={pagination?.totalCount}
             />
           </div>
@@ -134,8 +155,16 @@ const AdminPropertiesPage = () => {
           {/* Hiba üzenet */}
           {error && (
             <Card className="mb-6 border-red-200 bg-red-50/60 text-red-800">
-              <CardContent className="py-4">
-                {error}
+              <CardContent className="py-4 flex items-center justify-between">
+                <span>{error.message || "Hiba az adatok betöltésénél"}</span>
+                <Button
+                  onClick={handleRefresh}
+                  variant="outline"
+                  size="sm"
+                  className="text-red-700 hover:text-red-800"
+                >
+                  Újrapróbálás
+                </Button>
               </CardContent>
             </Card>
           )}
@@ -152,8 +181,8 @@ const AdminPropertiesPage = () => {
 
           {/* Ingatlan lista */}
           <div className="space-y-4">
-            {loading ? (
-              // Skeleton állapot
+            {isLoading && !data ? (
+              // Skeleton állapot csak az első betöltésnél
               Array.from({ length: 3 }).map((_, idx) => (
                 <Card key={idx} className="overflow-hidden shadow-sm">
                   <CardContent className="p-6">
@@ -179,7 +208,13 @@ const AdminPropertiesPage = () => {
               </Card>
             ) : (
               properties.map((property) => (
-                <Card key={property._id} className="overflow-hidden shadow-sm border border-slate-200/70">
+                <Card 
+                  key={property._id} 
+                  className={cn(
+                    "overflow-hidden shadow-sm border border-slate-200/70 transition-opacity",
+                    isLoading && "opacity-60"
+                  )}
+                >
                   <CardHeader className="pb-3">
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex-1">
@@ -412,7 +447,7 @@ const AdminPropertiesPage = () => {
                                   className="h-full w-full object-cover"
                                   onError={(e) => {
                                     e.currentTarget.src =
-                                      "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0nMTYwJyBoZWlnaHQ9Jzk2JyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnPjxyZWN0IHdpZHRoPScxNjAnIGhlaWdodD0nOTYnIGZpbGw9JyNFQkVCRUInLz48cGF0aCBkPSdNNTUgNjBsMjAtMjAgMjUgMzVIMjAnIGZpbGw9JyNDRURFRUYnLz48L3N2Zz4=";
+                                      "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0nMTYwJyBoZWlnaHQ9Jzk2JyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnPjxyZWN0IHdpZHRoPScxNjAnIGhlaWdodD0nOTYnIGZpbGw9JyNFQkVCRUInLz48cGF0aCBkPSdNNTUgNjBsMjAtMjAgMjUgMzVIMjAnIGZpbGw9JyNDRERFRUYnLz48L3N2Zz4=";
                                   }}
                                 />
                                 <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
@@ -479,7 +514,7 @@ const AdminPropertiesPage = () => {
                   <Button
                     variant="outline"
                     onClick={() => handlePageChange(currentPage - 1)}
-                    disabled={!pagination.hasPrevPage || loading}
+                    disabled={!pagination.hasPrevPage || isLoading}
                   >
                     <ChevronLeft className="h-4 w-4 mr-1" /> Előző
                   </Button>
@@ -503,7 +538,7 @@ const AdminPropertiesPage = () => {
                           key={pageNum}
                           variant={active ? "default" : "outline"}
                           onClick={() => handlePageChange(pageNum)}
-                          disabled={loading}
+                          disabled={isLoading}
                           className={cn("min-w-9", active && "shadow")}
                         >
                           {pageNum}
@@ -515,7 +550,7 @@ const AdminPropertiesPage = () => {
                   <Button
                     variant="outline"
                     onClick={() => handlePageChange(currentPage + 1)}
-                    disabled={!pagination.hasNextPage || loading}
+                    disabled={!pagination.hasNextPage || isLoading}
                   >
                     Következő <ChevronRight className="h-4 w-4 ml-1" />
                   </Button>
