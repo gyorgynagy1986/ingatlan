@@ -1,20 +1,13 @@
-// pages/api/kyero-proxy.ts vagy app/api/kyero-proxy/route.ts
+import { NextResponse } from 'next/server';
+import { withAdminAuth, AuthenticatedRequest } from '../../../lib/auth-helper';
 
-import { NextApiRequest, NextApiResponse } from 'next';
-
-export default async function handler(
-  req: NextApiRequest,
-  res: NextApiResponse
-) {
-  // Csak GET kéréseket engedélyezünk
-  if (req.method !== 'GET') {
-    return res.status(405).json({ message: 'Method not allowed' });
-  }
-
+async function handleGET(request: AuthenticatedRequest): Promise<NextResponse> {
   try {
     const apiUrl = 'https://procesos.apinmo.com/portal/kyeroagencias3/8875-kyero-jrYwggM0-Colaborador.xml';
     
-    // Fetch az API-ból a szerver oldalon (nincs CORS probléma)
+    const adminUser = request.session.user.email;
+    console.log(`🔗 Kyero XML proxy request by ${adminUser}`);
+
     const response = await fetch(apiUrl, {
       method: 'GET',
       headers: {
@@ -25,50 +18,15 @@ export default async function handler(
     });
 
     if (!response.ok) {
+      console.error(`Kyero API error (${adminUser}): HTTP ${response.status}`);
       throw new Error(`HTTP error! status: ${response.status}`);
     }
 
     const xmlData = await response.text();
-
-    // CORS headers beállítása
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-    res.setHeader('Content-Type', 'application/xml');
-
-    // XML adat visszaküldése
-    res.status(200).send(xmlData);
-
-  } catch (error) {
-    console.error('Error fetching Kyero data:', error);
-    res.status(500).json({ 
-      message: 'Error fetching data from Kyero API',
-      error: error instanceof Error ? error.message : 'Unknown error'
-    });
-  }
-}
-
-
-import { NextRequest, NextResponse } from 'next/server';
-
-export async function GET(request: NextRequest) {
-  try {
-    const apiUrl = 'https://procesos.apinmo.com/portal/kyeroagencias3/8875-kyero-jrYwggM0-Colaborador.xml';
     
-    const response = await fetch(apiUrl, {
-      method: 'GET',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept': 'application/xml, text/xml, */*',
-        'Accept-Language': 'en-US,en;q=0.9',
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const xmlData = await response.text();
+    // XML hosszának logolása (debug info)
+    const xmlLength = xmlData.length;
+    console.log(`✅ Kyero XML fetched successfully by ${adminUser}: ${xmlLength} characters`);
 
     return new NextResponse(xmlData, {
       status: 200,
@@ -77,17 +35,42 @@ export async function GET(request: NextRequest) {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET',
         'Access-Control-Allow-Headers': 'Content-Type',
+        // Admin audit headers (opcionális, debug célokra)
+        'X-Requested-By': adminUser,
+        'X-Request-Time': new Date().toISOString(),
+        'X-Data-Length': xmlLength.toString()
       },
     });
 
   } catch (error) {
-    console.error('Error fetching Kyero data:', error);
+    const adminUser = request.session?.user?.email || 'unknown';
+    console.error(`Error fetching Kyero data (${adminUser}):`, error);
+    
     return NextResponse.json(
       { 
+        success: false,
         message: 'Error fetching data from Kyero API',
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: error instanceof Error ? error.message : 'Unknown error',
+        requestedBy: adminUser,
+        timestamp: new Date().toISOString()
       },
       { status: 500 }
     );
   }
 }
+
+// Védett export
+export const GET = withAdminAuth(handleGET);
+
+/* 
+KYERO XML PROXY ENDPOINT
+
+Ez az endpoint Kyero ingatlan XML feed-et proxyzza át a CORS problémák elkerülésére.
+Most már csak adminok férhetnek hozzá.
+
+Használat:
+GET /api/kyero-proxy
+
+Response: XML adatok vagy hibaüzenet
+Headers tartalmazzák ki és mikor kérte le az adatokat.
+*/
