@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
-import Providers from "@/lib/providers";
-import Nav from "@/components/nav";
+import { authOptions } from "../../lib/auth";
+import Providers from "../../lib/providers";
+import Nav from "../../components/nav";
 
 export default async function Layout({ children }: { children: React.ReactNode }) {
 

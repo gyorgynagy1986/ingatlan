@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { signIn, useSession, signOut } from "next-auth/react";
+import { signIn, useSession } from "next-auth/react";
 import Link from "next/link";
 import Image from "next/image";
 import {
@@ -31,7 +31,7 @@ export default function SignIn() {
   const router = useRouter();
   const searchParams = useSearchParams();
   
-  const { data: session, status, update } = useSession();
+  const { data: session, status } = useSession();
 
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -42,6 +42,7 @@ export default function SignIn() {
   } | null>(null);
   const [step, setStep] = useState("request"); // 'request' or 'verify'
   const [codeInputFocus, setCodeInputFocus] = useState(false);
+  const [isRedirecting, setIsRedirecting] = useState(false);
 
   // --- VISSZASZÁMLÁLÓ ---
   const [countdown, setCountdown] = useState(3 * 60); // 3 perc = 180 mp
@@ -84,16 +85,16 @@ export default function SignIn() {
     }
   }, [searchParams]);
 
-  // Átirányítás ha már be vagyunk jelentkezve
+  // Session változás figyelése
   useEffect(() => {
-    if (status === "authenticated" && session) {
-      const callbackUrl = searchParams.get("callbackUrl");
-      // Egy kis késleltetés, hogy a UI átmenet simább legyen
-      setTimeout(() => {
-        router.push(callbackUrl || "/dashboard");
-      }, 500);
+    if (status === "authenticated" && session && !isRedirecting) {
+      setIsRedirecting(true);
+      const callbackUrl = searchParams.get("callbackUrl") || "/dashboard";
+      
+      // Használjuk a window.location.replace-t a biztos átirányításhoz
+      window.location.replace(callbackUrl);
     }
-  }, [status, session, router, searchParams]);
+  }, [status, session, searchParams, isRedirecting]);
 
   const handleRequestCode = async (
     e?: React.FormEvent<HTMLFormElement>
@@ -144,20 +145,19 @@ export default function SignIn() {
     setMessage(null);
 
     try {
-      // Most a signIn-nek átadjuk mind az email-t, mind a kódot
       const result = await signIn("credentials", {
         email: email,
-        code: code, // Kód átadása
+        code: code,
         redirect: false,
-        callbackUrl: "/dashboard",
       });
 
       if (result?.error) {
         setMessage({
           type: "error",
           text:
-            result.error ||
-            "Nem sikerült a bejelentkezés. Kérjük, próbálja újra.",
+            result.error === "CredentialsSignin" 
+              ? "Hibás kód. Kérjük, próbálja újra."
+              : result.error || "Nem sikerült a bejelentkezés.",
         });
       } else if (result?.ok) {
         // Sikeres bejelentkezés
@@ -166,14 +166,9 @@ export default function SignIn() {
           text: "Sikeres bejelentkezés! Átirányítás...",
         });
         
-        // Session frissítése
-        await update();
-        
-        // Egy kis várakozás a jobb UX-ért
-        setTimeout(() => {
-          const callbackUrl = searchParams.get("callbackUrl") || "/dashboard";
-          router.push(callbackUrl);
-        }, 1000);
+        // Azonnal átirányítunk hard refresh-sel
+        const callbackUrl = searchParams.get("callbackUrl") || "/dashboard";
+        window.location.href = callbackUrl;
       }
     } catch (error) {
       console.error("Verification error:", error);
@@ -198,8 +193,8 @@ export default function SignIn() {
     );
   }
 
-  // Ha már be van jelentkezve, mutasson egy átmeneti üzenetet
-  if (status === "authenticated" && session) {
+  // Ha már be van jelentkezve vagy átirányítás alatt
+  if ((status === "authenticated" && session) || isRedirecting) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100 px-4 py-12 sm:px-6 lg:px-8">
         <div className="w-full max-w-md">
@@ -228,13 +223,13 @@ export default function SignIn() {
                   <line x1="14" y1="1" x2="14" y2="4"></line>
                 </svg>
               </span>
-              <span className="text-2xl font-bold text-gray-900">Ingatlan</span>
+              <span className="text-2xl font-bold text-gray-900">Bukio</span>
             </Link>
           </div>
 
           <div className="bg-white shadow-xl rounded-xl overflow-hidden">
             <div className="p-8 text-center">
-              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-100 text-green-600 mb-4 animate-pulse">
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-100 text-green-600 mb-4">
                 <CheckCircle size={28} />
               </div>
               <h1 className="text-2xl font-bold text-gray-900 mb-2">
@@ -247,6 +242,15 @@ export default function SignIn() {
                 <div className="flex items-center justify-center">
                   <RefreshCw className="animate-spin h-5 w-5 text-indigo-600" />
                 </div>
+                <p className="text-sm text-gray-500">
+                  Ha az átirányítás nem történik meg automatikusan,{" "}
+                  <a 
+                    href={searchParams.get("callbackUrl") || "/dashboard"}
+                    className="text-indigo-600 hover:text-indigo-500"
+                  >
+                    kattintson ide
+                  </a>
+                </p>
               </div>
             </div>
           </div>
@@ -351,7 +355,7 @@ export default function SignIn() {
                   <line x1="14" y1="1" x2="14" y2="4"></line>
                 </svg>
               </span>
-              <span className="text-2xl font-bold text-gray-900">Ingatlan</span>
+              <span className="text-2xl font-bold text-gray-900">Bukio</span>
             </Link>
           </div>
 
