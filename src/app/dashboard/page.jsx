@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import Link from "next/link";
 import useSWR from "swr";
 import {
   ChevronLeft,
@@ -487,10 +488,10 @@ const AdminPropertiesPage = () => {
                     </div>
                     <div className="flex gap-2">
                       <Button asChild size="sm">
-                        <a href={`/dashboard/${property.id}`}><Eye className="h-4 w-4 mr-1" /> Megtekint</a>
+                        <Link href={`/dashboard/${property.id}`}><Eye className="h-4 w-4 mr-1" /> Megtekint</Link>
                       </Button>
                       <Button asChild size="sm" variant="secondary">
-                        <a href={`/dashboard/edit/${property.id}`}>Szerkeszt</a>
+                        <Link href={`/dashboard/edit/${property.id}`}>Szerkeszt</Link>
                       </Button>
                       {property.url && (
                         <Button asChild size="sm" variant="outline">

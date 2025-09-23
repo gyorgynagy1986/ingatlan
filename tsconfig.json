@@ -30,6 +30,6 @@
     "src/app/dashboard/compare/page.jsx",
     "src/app/properties/page.jsx",
     "src/app/properties/[slug]/page.jsx"
-, "src/components/ui/select.jsx", "src/app/api/admin/properties/options/route.js", "src/app/dashboard/page.jsx", "src/app/dashboard/edit/[id]/page.jsx", "src/app/api/export-database/route.js", "src/app/api/dashboard/property/[slug]/route.js", "src/app/api/batch-update-properties/route.js", "src/app/api/admin/properties/[id]/route.js", "src/lib/providers.js"  ],
+, "src/components/ui/select.jsx", "src/app/api/admin/properties/options/route.js", "src/app/dashboard/page.jsx", "src/app/dashboard/edit/[id]/page.jsx", "src/app/api/export-database/route.js", "src/app/api/dashboard/property/[slug]/route.js", "src/app/api/batch-update-properties/route.js", "src/app/api/admin/properties/[id]/route.js", "src/lib/providers.js", "src/app/dashboard/[slug]/page.jsx"  ],
   "exclude": ["node_modules"]
 }

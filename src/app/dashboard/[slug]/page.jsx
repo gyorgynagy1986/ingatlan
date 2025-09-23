@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import {
   MapPin,
   Calendar,
@@ -18,20 +19,47 @@ import {
 
 // shadcn/ui
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+
+const MapOSM = dynamic(() => import("@/components/MapOSM"), { ssr: false });
 
 function cn(...classes) {
   return classes.filter(Boolean).join(" ");
 }
 
+// Segédfüggvények
+const hasVal = (v) =>
+  v !== undefined && v !== null && String(v).trim?.() !== "";
+
+const Row = ({ label, children }) => (
+  <div className="grid grid-cols-5 gap-2 py-2 border-b last:border-b-0">
+    <div className="col-span-2 text-sm text-muted-foreground">{label}</div>
+    <div className="col-span-3 text-sm">{children}</div>
+  </div>
+);
+
+const BoolBadge = ({ on, yes = "Igen", no = "Nem" }) => (
+  <Badge variant={on ? "default" : "secondary"} className="rounded-full">
+    {on ? yes : no}
+  </Badge>
+);
+
 export default function PropertyDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const slug = Array.isArray(params?.slug) ? params.slug[0] : (params?.slug ?? "");
+  const slug = Array.isArray(params?.slug)
+    ? params.slug[0]
+    : params?.slug ?? "";
 
   const [property, setProperty] = useState(null);
   const [similar, setSimilar] = useState([]);
@@ -39,6 +67,55 @@ export default function PropertyDetailPage() {
   const [error, setError] = useState(null);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [imageModalOpen, setImageModalOpen] = useState(false);
+
+  // Move useMemo BEFORE the early returns to ensure hooks are always called in the same order
+  // Gyors státusz-badge-ek a jobb hasáb tetejére (új építés, rész/tulajdon, bérleti jog, medence, energia)
+  const StatusBadges = useMemo(() => {
+    // If property is null/undefined, return empty array
+    if (!property) return [];
+
+    const items = [];
+    if (hasVal(property.new_build))
+      items.push(
+        <Badge
+          key="new_build"
+          variant={property.new_build ? "default" : "secondary"}
+        >
+          Új építés: {property.new_build ? "Igen" : "Nem"}
+        </Badge>
+      );
+    if (hasVal(property.part_ownership))
+      items.push(
+        <Badge
+          key="part_ownership"
+          variant={property.part_ownership ? "default" : "secondary"}
+        >
+          Rész-tulajdon: {property.part_ownership ? "Igen" : "Nem"}
+        </Badge>
+      );
+    if (hasVal(property.leasehold))
+      items.push(
+        <Badge
+          key="leasehold"
+          variant={property.leasehold ? "default" : "secondary"}
+        >
+          Bérleti jog: {property.leasehold ? "Igen" : "Nem"}
+        </Badge>
+      );
+    if (hasVal(property.pool))
+      items.push(
+        <Badge key="pool" variant={property.pool ? "default" : "secondary"}>
+          Medence: {property.pool ? "Igen" : "Nem"}
+        </Badge>
+      );
+    if (hasVal(property.energy_rating))
+      items.push(
+        <Badge key="energy_rating" variant="outline" className="font-mono">
+          Energia: {String(property.energy_rating).toUpperCase()}
+        </Badge>
+      );
+    return items;
+  }, [property]);
 
   // Adatok betöltése
   useEffect(() => {
@@ -73,7 +150,9 @@ export default function PropertyDetailPage() {
   };
   const prevImage = () => {
     if (property?.images?.length > 0) {
-      setCurrentImageIndex((prev) => (prev - 1 + property.images.length) % property.images.length);
+      setCurrentImageIndex(
+        (prev) => (prev - 1 + property.images.length) % property.images.length
+      );
     }
   };
   const openImageModal = (index) => {
@@ -101,7 +180,9 @@ export default function PropertyDetailPage() {
             <CardDescription>{error}</CardDescription>
           </CardHeader>
           <CardFooter>
-            <Badge variant="secondary" className="font-mono">ID: {String(slug)}</Badge>
+            <Badge variant="secondary" className="font-mono">
+              ID: {String(slug)}
+            </Badge>
           </CardFooter>
         </Card>
       </div>
@@ -117,7 +198,9 @@ export default function PropertyDetailPage() {
             <CardDescription>A keresett ingatlan nem létezik.</CardDescription>
           </CardHeader>
           <CardFooter>
-            <Badge variant="outline" className="font-mono">ID: {String(slug)}</Badge>
+            <Badge variant="outline" className="font-mono">
+              ID: {String(slug)}
+            </Badge>
           </CardFooter>
         </Card>
       </div>
@@ -130,12 +213,20 @@ export default function PropertyDetailPage() {
         {/* Header */}
         <div className="sticky top-0 z-30 -mx-6 px-6 py-4 backdrop-blur supports-[backdrop-filter]:bg-white/70 dark:supports-[backdrop-filter]:bg-slate-900/50 border-b">
           <div className="flex items-center gap-3">
-            <Button variant="ghost" onClick={() => router.back()} className="-ml-2">
+            <Button
+              variant="ghost"
+              onClick={() => router.back()}
+              className="-ml-2"
+            >
               <ChevronLeft className="h-4 w-4 mr-2" /> Vissza
             </Button>
             <div>
-              <h1 className="text-2xl font-semibold tracking-tight">{property.type} – {property.town}</h1>
-              <p className="text-xs text-muted-foreground font-mono">ID: {property.id}</p>
+              <h1 className="text-2xl font-semibold tracking-tight">
+                {property.type} – {property.town}
+              </h1>
+              <p className="text-xs text-muted-foreground font-mono">
+                ID: {property.id}
+              </p>
             </div>
           </div>
         </div>
@@ -207,7 +298,9 @@ export default function PropertyDetailPage() {
                             className="w-full h-full object-cover group-hover:opacity-80"
                           />
                           {image.floorplan && (
-                            <span className="absolute top-1 right-1 text-[10px] px-1 rounded bg-blue-600 text-white">Alaprajz</span>
+                            <span className="absolute top-1 right-1 text-[10px] px-1 rounded bg-blue-600 text-white">
+                              Alaprajz
+                            </span>
                           )}
                         </button>
                       ))}
@@ -245,7 +338,9 @@ export default function PropertyDetailPage() {
                 <CardContent>
                   <div className="flex flex-wrap gap-2">
                     {property.features.map((feature, i) => (
-                      <Badge key={i} variant="outline" className="rounded-full">{feature.name}</Badge>
+                      <Badge key={i} variant="outline" className="rounded-full">
+                        {feature.name}
+                      </Badge>
                     ))}
                   </div>
                 </CardContent>
@@ -258,38 +353,277 @@ export default function PropertyDetailPage() {
             {/* Ár és alapadatok */}
             <Card>
               <CardHeader className="text-center">
-                <CardTitle className="text-3xl text-emerald-600">{property.formatted_price}</CardTitle>
-                <CardDescription className="capitalize">{property.price_freq}</CardDescription>
+                <CardTitle className="text-3xl text-emerald-600">
+                  {property.formatted_price}
+                </CardTitle>
+                <CardDescription className="capitalize">
+                  {property.price_freq}
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="flex items-center gap-3">
                   <MapPin className="h-5 w-5 text-muted-foreground" />
                   <div>
                     <p className="font-medium">{property.town}</p>
-                    <p className="text-sm text-muted-foreground">{property.province}, {property.country}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {property.province}, {property.country}
+                    </p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
                   <Home className="h-5 w-5 text-muted-foreground" />
                   <div>
-                    <p className="font-medium">{property.beds} szoba, {property.baths} fürdőszoba</p>
-                    {property.surface_area && <p className="text-sm text-muted-foreground">{property.surface_area} m²</p>}
+                    <p className="font-medium">
+                      {property.beds} szoba, {property.baths} fürdőszoba
+                    </p>
+                    {property.surface_area && (
+                      <p className="text-sm text-muted-foreground">
+                        {property.surface_area} m²
+                      </p>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
                   <Calendar className="h-5 w-5 text-muted-foreground" />
                   <div>
                     <p className="font-medium">Listázva</p>
-                    <p className="text-sm text-muted-foreground">{property.formatted_date}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {property.formatted_date}
+                    </p>
                   </div>
                 </div>
                 {property.pool === 1 && (
-                  <div className="rounded-md border bg-blue-50/60 border-blue-200 p-3 text-center text-blue-900">🏊‍♂️ Medencés</div>
+                  <div className="rounded-md border bg-blue-50/60 border-blue-200 p-3 text-center text-blue-900">
+                    🏊‍♂️ Medencés
+                  </div>
                 )}
               </CardContent>
             </Card>
 
-            {/* Kapcsolat */}
+            {/* Gyors státusz badge-ek */}
+            {(StatusBadges?.length ?? 0) > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Státusz</CardTitle>
+                </CardHeader>
+                <CardContent className="flex flex-wrap gap-2">
+                  {StatusBadges}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Részletes adatok (minden a sémából) */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Részletes adatok</CardTitle>
+                <CardDescription>
+                  Összes mező megjelenítve, ha van értéke
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="rounded-md border divide-y">
+                  {hasVal(property.id) && <Row label="ID">{property.id}</Row>}
+                  {hasVal(property.ref) && (
+                    <Row label="Referencia">{property.ref}</Row>
+                  )}
+                  {hasVal(property.date) && (
+                    <Row label="Dátum (nyers)">{property.date}</Row>
+                  )}
+                  {hasVal(property.formatted_date) && (
+                    <Row label="Dátum (formázott)">
+                      {property.formatted_date}
+                    </Row>
+                  )}
+                  {hasVal(property.type) && (
+                    <Row label="Típus">{property.type}</Row>
+                  )}
+                  {hasVal(property.title_extra) && (
+                    <Row label="Cím kiegészítő">{property.title_extra}</Row>
+                  )}
+                  {hasVal(property.price) && (
+                    <Row label="Ár (nyers)">
+                      {property.price} {property.currency || "EUR"}
+                    </Row>
+                  )}
+                  {hasVal(property.formatted_price) && (
+                    <Row label="Ár (formázott)">{property.formatted_price}</Row>
+                  )}
+                  {hasVal(property.currency) && (
+                    <Row label="Pénznem">{property.currency}</Row>
+                  )}
+                  {hasVal(property.price_freq) && (
+                    <Row label="Ár gyakoriság">{property.price_freq}</Row>
+                  )}
+                  {hasVal(property.country) && (
+                    <Row label="Ország">{property.country}</Row>
+                  )}
+                  {hasVal(property.province) && (
+                    <Row label="Megye/Provincia">{property.province}</Row>
+                  )}
+                  {hasVal(property.town) && (
+                    <Row label="Város/Község">{property.town}</Row>
+                  )}
+                  {hasVal(property.location_detail) && (
+                    <Row label="Hely részletei">{property.location_detail}</Row>
+                  )}
+                  {hasVal(property.location) && (
+                    <Row label="Lokáció string">{property.location}</Row>
+                  )}
+                  {hasVal(property.cp) && <Row label="CP">{property.cp}</Row>}
+                  {hasVal(property.postal_code) && (
+                    <Row label="Irányítószám">{property.postal_code}</Row>
+                  )}
+                  {hasVal(property.beds) && (
+                    <Row label="Hálók">{property.beds}</Row>
+                  )}
+                  {hasVal(property.baths) && (
+                    <Row label="Fürdők">{property.baths}</Row>
+                  )}
+                  {hasVal(property.surface_area) && (
+                    <Row label="Alapterület">{property.surface_area} m²</Row>
+                  )}
+                  {hasVal(property.estado_propiedad) && (
+                    <Row label="Ingatlan állapota (kód)">
+                      {property.estado_propiedad}
+                    </Row>
+                  )}
+                  {hasVal(property.antiguedad) && (
+                    <Row label="Életkor / Kor (kód)">{property.antiguedad}</Row>
+                  )}
+                  {hasVal(property.energy_rating) && (
+                    <Row label="Energia besorolás">
+                      <Badge variant="outline" className="font-mono">
+                        {String(property.energy_rating).toUpperCase()}
+                      </Badge>
+                    </Row>
+                  )}
+                  {hasVal(property.new_build) && (
+                    <Row label="Új építés">
+                      <BoolBadge on={!!property.new_build} />
+                    </Row>
+                  )}
+                  {hasVal(property.part_ownership) && (
+                    <Row label="Rész-tulajdon">
+                      <BoolBadge on={!!property.part_ownership} />
+                    </Row>
+                  )}
+                  {hasVal(property.leasehold) && (
+                    <Row label="Bérleti jog">
+                      <BoolBadge on={!!property.leasehold} />
+                    </Row>
+                  )}
+                  {hasVal(property.pool) && (
+                    <Row label="Medence">
+                      <BoolBadge on={!!property.pool} />
+                    </Row>
+                  )}
+                  {hasVal(property.latitude) && (
+                    <Row label="Szélesség (lat)">{property.latitude}</Row>
+                  )}
+                  {hasVal(property.longitude) && (
+                    <Row label="Hosszúság (lng)">{property.longitude}</Row>
+                  )}
+                  {hasVal(property.agencia) && (
+                    <Row label="Ügynökség">{property.agencia}</Row>
+                  )}
+                  {hasVal(property.telefono) && (
+                    <Row label="Telefon">
+                      <a
+                        href={`tel:${property.telefono}`}
+                        className="text-primary hover:underline"
+                      >
+                        {property.telefono}
+                      </a>
+                    </Row>
+                  )}
+                  {hasVal(property.email) && (
+                    <Row label="Email">
+                      <a
+                        href={`mailto:${property.email}`}
+                        className="text-primary hover:underline break-all"
+                      >
+                        {property.email}
+                      </a>
+                    </Row>
+                  )}
+                  {hasVal(property.url) && (
+                    <Row label="Eredeti hirdetés">
+                      <a
+                        href={property.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary hover:underline break-all"
+                      >
+                        {property.url}
+                      </a>
+                    </Row>
+                  )}
+                  {hasVal(property._index) && (
+                    <Row label="_index">{property._index}</Row>
+                  )}
+                  {hasVal(property.createdAt) && (
+                    <Row label="Létrehozva">
+                      {new Date(property.createdAt).toLocaleString()}
+                    </Row>
+                  )}
+                  {hasVal(property.updatedAt) && (
+                    <Row label="Módosítva">
+                      {new Date(property.updatedAt).toLocaleString()}
+                    </Row>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Térkép (ingyenes OSM) */}
+            {typeof property.latitude === "number" &&
+            typeof property.longitude === "number" ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Térkép</CardTitle>
+                  <CardDescription>OpenStreetMap (ingyenes)</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <MapOSM
+                    lat={property.latitude}
+                    lng={property.longitude}
+                    label={`${property.type} — ${property.town}${
+                      property.province ? `, ${property.province}` : ""
+                    }`}
+                    height={260}
+                    zoom={15}
+                  />
+                  <Button asChild variant="secondary" className="w-full">
+                    <a
+                      href={`https://www.openstreetmap.org/?mlat=${property.latitude}&mlon=${property.longitude}#map=16/${property.latitude}/${property.longitude}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Útvonal / nagyobb térkép megnyitása
+                    </a>
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    Térkép: &copy; OpenStreetMap közreműködők — attribúció
+                    szükséges.
+                  </p>
+                </CardContent>
+              </Card>
+            ) : (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Térkép</CardTitle>
+                  <CardDescription>Nincs megadva koordináta</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-muted-foreground">
+                    Ehhez az ingatlanhoz nem található <code>latitude</code>/
+                    <code>longitude</code>.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Kapcsolat (marad) */}
             <Card>
               <CardHeader>
                 <CardTitle>Kapcsolat</CardTitle>
@@ -297,25 +631,42 @@ export default function PropertyDetailPage() {
               <CardContent className="space-y-3">
                 <div>
                   <p className="font-medium">{property.agencia}</p>
-                  <p className="text-sm text-muted-foreground">Ingatlanügynökség</p>
+                  <p className="text-sm text-muted-foreground">
+                    Ingatlanügynökség
+                  </p>
                 </div>
                 {property.telefono && (
                   <div className="flex items-center gap-3">
                     <Phone className="h-4 w-4 text-muted-foreground" />
-                    <a href={`tel:${property.telefono}`} className="text-primary hover:underline">{property.telefono}</a>
+                    <a
+                      href={`tel:${property.telefono}`}
+                      className="text-primary hover:underline"
+                    >
+                      {property.telefono}
+                    </a>
                   </div>
                 )}
                 {property.email && (
                   <div className="flex items-center gap-3">
                     <Mail className="h-4 w-4 text-muted-foreground" />
-                    <a href={`mailto:${property.email}`} className="text-primary hover:underline break-all text-sm">{property.email}</a>
+                    <a
+                      href={`mailto:${property.email}`}
+                      className="text-primary hover:underline break-all text-sm"
+                    >
+                      {property.email}
+                    </a>
                   </div>
                 )}
                 {property.url && (
                   <div className="pt-3">
                     <Button asChild className="w-full">
-                      <a href={property.url} target="_blank" rel="noopener noreferrer">
-                        <ExternalLink className="h-4 w-4 mr-2" /> Eredeti hirdetés megtekintése
+                      <a
+                        href={property.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        <ExternalLink className="h-4 w-4 mr-2" /> Eredeti
+                        hirdetés megtekintése
                       </a>
                     </Button>
                   </div>
@@ -331,20 +682,36 @@ export default function PropertyDetailPage() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {similar.map((item) => (
-                    <Link key={item.id} href={`/dashboard/${item.id}`} className="block">
+                    <Link
+                      key={item.id}
+                      href={`/dashboard/${item.id}`}
+                      className="block"
+                    >
                       <div className="flex gap-3 rounded-md border p-3 hover:bg-muted/50 transition-colors">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         {item.images && item.images.length > 0 ? (
-                          <img src={item.images[0].url} alt={item.type} className="h-16 w-16 rounded object-cover" />
+                          <img
+                            src={item.images[0].url}
+                            alt={item.type}
+                            className="h-16 w-16 rounded object-cover"
+                          />
                         ) : (
-                          <div className="h-16 w-16 rounded grid place-items-center bg-muted text-muted-foreground"><ImageIcon className="h-6 w-6" /></div>
+                          <div className="h-16 w-16 rounded grid place-items-center bg-muted text-muted-foreground">
+                            <ImageIcon className="h-6 w-6" />
+                          </div>
                         )}
                         <div className="flex-1">
                           <p className="font-medium text-sm">{item.type}</p>
-                          <p className="text-xs text-muted-foreground">{item.town}</p>
-                          <p className="text-sm font-semibold text-emerald-600">{item.formatted_price}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {item.town}
+                          </p>
+                          <p className="text-sm font-semibold text-emerald-600">
+                            {item.formatted_price}
+                          </p>
                         </div>
-                        <Button variant="secondary" size="sm">Megnézem</Button>
+                        <Button variant="secondary" size="sm">
+                          Megnézem
+                        </Button>
                       </div>
                     </Link>
                   ))}
