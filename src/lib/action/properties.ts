@@ -88,10 +88,12 @@ export async function fetchPropertiesViaApi(params: PropertySearchParams): Promi
     return q ? `?${q}` : '';
   })()}`;
 
-  const res = await fetch(url, {
-    cache: 'force-cache',                 // hagyjuk érvényesülni az Edge/CDN cache-t
-    next: { revalidate: 1800, tags: ['properties'] },
-  });
+  const res = await fetch(url
+  //  ,{
+  //  cache: 'force-cache',                 // hagyjuk érvényesülni az Edge/CDN cache-t
+  //  next: { revalidate: 1800, tags: ['properties'] },
+  //}
+);
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
