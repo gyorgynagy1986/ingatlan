@@ -1,7 +1,8 @@
-'use server';
+"use server"
 
 import dbConnect from '@/lib/db';
 import PropertyModel from '../../models/Property';
+
 
 // Client-side Property interface
 export interface Property {

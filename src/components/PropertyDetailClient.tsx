@@ -40,6 +40,8 @@ const ImageGallery: React.FC<{ images: Property['images'] }> = ({ images }) => {
           <Image
             src={images[currentImageIndex]?.url}
             alt={`Property image ${currentImageIndex + 1}`}
+            width={500}
+            height={500}
             className="w-full h-full object-cover cursor-pointer"
             onClick={() => setShowFullscreen(true)}
             onError={(e) => {
@@ -84,6 +86,8 @@ const ImageGallery: React.FC<{ images: Property['images'] }> = ({ images }) => {
               >
                 <Image
                   src={image.url}
+                  width={500}
+                  height={500}
                   alt={`Thumbnail ${index + 1}`}
                   className="w-full h-20 object-cover hover:opacity-80 transition-opacity"
                   onError={(e) => {
