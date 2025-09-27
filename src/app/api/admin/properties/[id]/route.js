@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import dbConnect from "../../../../../lib/db";
 import Property from "../../../../../models/Property";
 import { withAdminAuth } from "../../../../../lib/auth-helper";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 
 // GET - Egyedi property lekérés szerkesztéshez
 async function handleGET(request, { params }) {
@@ -79,6 +79,7 @@ async function handlePUT(request, { params }) {
     );
 
     revalidatePath("/api/public/properties");
+    revalidateTag("properties");
 
     if (!updatedProperty) {
       return NextResponse.json(
