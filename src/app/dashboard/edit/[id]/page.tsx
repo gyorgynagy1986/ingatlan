@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useCallback, memo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Save, ArrowLeft, Trash2, Plus, X, AlertTriangle, ArrowUp, ArrowDown } from "lucide-react";
+import Image from "next/image";
 
 // shadcn/ui
 import { Button } from "@/components/ui/button";
@@ -171,8 +172,10 @@ const ImageCard = memo(
           </Button>
         </div>
 
-        <img
+        <Image
           src={image.url}
+          width={250}
+          height={250}
           alt={`Property image ${index + 1}`}
           className="h-40 w-full object-cover"
           onError={(e) => {
@@ -453,6 +456,7 @@ export default function PropertyEditPage() {
         setSuccess("Property sikeresen frissítve!");
         setProperty(data.data);
         setTimeout(() => setSuccess(null), 2500);
+
       } else {
         setError(data.error || "Hiba a mentés során");
       }
