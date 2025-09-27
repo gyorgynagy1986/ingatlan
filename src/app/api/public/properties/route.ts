@@ -6,10 +6,6 @@ import PropertyModel from '@/models/Property';
 
 import type { FilterQuery, Model } from 'mongoose';
 
-export const dynamic = 'force-static';
-export const revalidate = 1800; // 30 perc
-
-
 // A LEAN dokumentum forma – csak azok a mezők, amiket ténylegesen használsz
 interface DbProperty {
   _id?: string;
