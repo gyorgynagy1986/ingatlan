@@ -77,10 +77,8 @@ const buildQuery = (p: PropertySearchParams) => {
 };
 
 const getBaseUrl = () => {
-  const site = process.env.NEXT_PUBLIC_SITE_URL;
-  const vercel = process.env.VERCEL_URL;
+  const site = process.env.NEXT_PUBLIC_API_URL;
   if (site) return site.replace(/\/$/, '');
-  if (vercel) return `https://${vercel}`;
   return 'http://localhost:3000';
 };
 
