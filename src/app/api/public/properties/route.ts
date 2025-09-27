@@ -1,12 +1,14 @@
 // app/api/public/properties/route.ts
-export const dynamic = 'force-static';
-// export const revalidate = 1800; // 30 perc
 
 import { NextResponse } from 'next/server';
 import dbConnect from '@/lib/db';
 import PropertyModel from '@/models/Property';
 
 import type { FilterQuery, Model } from 'mongoose';
+
+export const dynamic = 'force-static';
+export const revalidate = 1800; // 30 perc
+
 
 // A LEAN dokumentum forma – csak azok a mezők, amiket ténylegesen használsz
 interface DbProperty {
