@@ -3,6 +3,9 @@ import React from 'react';
 import { searchProperties, PropertySearchParams } from '../../lib/action/getPublicData';
 import ServerSidePropertyLanding from '../../components/ServerSidePropertyLanding';
 
+export const dynamic = 'force-dynamic';
+
+
 interface PageProps {
   searchParams: { [key: string]: string | string[] | undefined };
 }

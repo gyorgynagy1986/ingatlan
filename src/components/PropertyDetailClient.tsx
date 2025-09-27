@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { ChevronLeft, ChevronRight, MapPin, Bed, Bath, Square, Phone, Mail, ExternalLink, Share2, Heart, Calendar } from 'lucide-react';
 import Link from 'next/link';
 import { Property } from '../lib/action/getPublicData'; // Updated import
+import Image from 'next/image';
 
 // Image Gallery Component
 const ImageGallery: React.FC<{ images: Property['images'] }> = ({ images }) => {
@@ -36,7 +37,7 @@ const ImageGallery: React.FC<{ images: Property['images'] }> = ({ images }) => {
       {/* Main Image Display */}
       <div className="relative">
         <div className="relative h-[500px] rounded-lg overflow-hidden">
-          <img
+          <Image
             src={images[currentImageIndex]?.url}
             alt={`Property image ${currentImageIndex + 1}`}
             className="w-full h-full object-cover cursor-pointer"
@@ -81,7 +82,7 @@ const ImageGallery: React.FC<{ images: Property['images'] }> = ({ images }) => {
                   index === currentImageIndex ? 'ring-2 ring-blue-600' : ''
                 }`}
               >
-                <img
+                <Image
                   src={image.url}
                   alt={`Thumbnail ${index + 1}`}
                   className="w-full h-20 object-cover hover:opacity-80 transition-opacity"
@@ -110,7 +111,7 @@ const ImageGallery: React.FC<{ images: Property['images'] }> = ({ images }) => {
             ✕
           </button>
           
-          <img
+          <Image
             src={images[currentImageIndex]?.url}
             alt={`Fullscreen ${currentImageIndex + 1}`}
             className="max-w-full max-h-full object-contain"
@@ -169,7 +170,7 @@ const ContactForm: React.FC<{ property: Property }> = ({ property }) => {
         message: `Estoy interesado en la propiedad Ref: ${property.ref} - ${property.type} en ${property.town}`
       });
     } catch (error) {
-      alert('Error al enviar el mensaje. Inténtalo de nuevo.');
+      alert(`Error ${error}`);
     } finally {
       setIsSubmitting(false);
     }
@@ -251,7 +252,6 @@ const ContactForm: React.FC<{ property: Property }> = ({ property }) => {
 
 // Main Property Detail Client Component
 const PropertyDetailClient: React.FC<{ property: Property }> = ({ property }) => {
-  const router = useRouter();
   const [saved, setSaved] = useState(false);
 
   const handleShare = async () => {

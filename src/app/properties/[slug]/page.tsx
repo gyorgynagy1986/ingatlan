@@ -11,7 +11,7 @@ interface PageProps {
 // Server Component - gets property data from MongoDB
 const PropertyDetailPage = async ({ params }: PageProps) => {
   // Next.js 15+ requires await for params
-  const { slug } = await params;
+  const { slug } = params;
   
   console.log(`🔍 PropertyDetailPage: Loading property with slug: ${slug}`);
   
@@ -39,7 +39,7 @@ export default PropertyDetailPage;
 
 // Generate metadata for SEO
 export async function generateMetadata({ params }: PageProps) {
-  const { slug } = await params;
+  const { slug } =  params;
   
   try {
     const property = await getPropertyBySlug(slug);
@@ -79,7 +79,7 @@ export async function generateMetadata({ params }: PageProps) {
   } catch (error) {
     return {
       title: 'Error al cargar propiedad',
-      description: 'Ha ocurrido un error al cargar la información de la propiedad.'
+      description: `Ha ocurrido un ${error}  al cargar la información de la propiedad.`
     };
   }
 }
