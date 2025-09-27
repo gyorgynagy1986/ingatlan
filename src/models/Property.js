@@ -1,6 +1,7 @@
 // models/Property.js
 import mongoose from 'mongoose';
 
+
 const PropertyImageSchema = new mongoose.Schema({
   id: String,
   url: { type: String, required: true },
