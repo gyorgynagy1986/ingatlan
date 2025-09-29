@@ -1,142 +1,291 @@
 "use client";
 
-import React, { useState, useCallback, useTransition } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { ChevronLeft, ChevronRight, MapPin, Bed, Bath, Square, ExternalLink, Search } from 'lucide-react';
-import Image from 'next/image';
-import { searchProperties, PropertySearchParams, PropertySearchResult, Property } from '../lib/action/getPublicData';
+import React, { useState, useCallback, useTransition, useEffect, useRef } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import {
+  ChevronLeft,
+  ChevronRight,
+  MapPin,
+  Bed,
+  Bath,
+  Square,
+  ExternalLink,
+  Search,
+} from "lucide-react";
+import Image from "next/image";
+import {
+  searchProperties,
+  PropertySearchParams,
+  PropertySearchResult,
+  Property,
+} from "../lib/action/getPublicData";
+import Placeholder from '../../public/assets/cover.jpg'
 
 // Generate slug function
 const generateSlug = (property: Property) => {
-  const cleanText = (text: string) => text
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9\s-]/g, '')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .trim();
-  
+  const cleanText = (text: string) =>
+    text
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9\s-]/g, "")
+      .replace(/\s+/g, "-")
+      .replace(/-+/g, "-")
+      .trim();
+
   const typeSlug = cleanText(property.type);
   const townSlug = cleanText(property.town);
-  const locationSlug = property.location_detail ? cleanText(property.location_detail) : '';
-  
+  const locationSlug = property.location_detail
+    ? cleanText(property.location_detail)
+    : "";
+
   const slugParts = [typeSlug, townSlug];
   if (locationSlug) slugParts.push(locationSlug);
   slugParts.push(property.id);
-  
-  return slugParts.join('-').replace(/--+/g, '-');
+
+  return slugParts.join("-").replace(/--+/g, "-");
 };
 
-// Property Card Component
+// ===============
+// Preload helpers
+// ===============
+
+// URL-alapú cache-ek, hogy ne index szerint duplikáljunk
+const useUrlPreloadCaches = () => {
+  const preloadedUrls = useRef<Set<string>>(new Set());
+  const failedUrls = useRef<Set<string>>(new Set());
+  const loadingUrls = useRef<Set<string>>(new Set());
+  return { preloadedUrls, failedUrls, loadingUrls } as const;
+};
+
+const usePreloadUrl = (label: string) => {
+  const { preloadedUrls, failedUrls, loadingUrls } = useUrlPreloadCaches();
+
+  const preloadUrl = useCallback(
+    (url?: string | null, onOk?: () => void, onErr?: () => void) => {
+      if (!url) return;
+      if (preloadedUrls.current.has(url)) {
+        console.log(`${label} ✅ Cache-hit:`, url);
+        onOk?.();
+        return;
+      }
+      if (failedUrls.current.has(url)) {
+        console.warn(`${label} ⛔ Korábbi hiba, nem próbáljuk újra:`, url);
+        onErr?.();
+        return;
+      }
+      if (loadingUrls.current.has(url)) {
+        console.log(`${label} ⏳ Már töltés alatt:`, url);
+        return;
+      }
+
+      loadingUrls.current.add(url);
+      console.log(`${label} ▶️ Előtöltés indul:`, url);
+
+      const img = new window.Image();
+      img.decoding = "async";
+
+      img.onload = () => {
+        preloadedUrls.current.add(url);
+        loadingUrls.current.delete(url);
+        console.log(`${label} ✅ Betöltve:`, url);
+        onOk?.();
+      };
+      img.onerror = (e) => {
+        failedUrls.current.add(url);
+        loadingUrls.current.delete(url);
+        console.error(`${label} ❌ Hiba:`, url, e);
+        onErr?.();
+      };
+
+      // HANDLEREK UTÁN állítjuk a src-t, hogy cache-hitnél se maradjon le az onload
+      img.src = url;
+    },
+    [preloadedUrls, failedUrls, loadingUrls, label]
+  );
+
+  return { preloadUrl, preloadedUrls, failedUrls, loadingUrls } as const;
+};
+
+// ==========================
+// Image Preloader Hook (Card)
+// ==========================
+const useImagePreloader = (images: { id: string; url: string }[], propertyId: string) => {
+  const [loadedImages, setLoadedImages] = useState<Set<number>>(new Set());
+  const [isHovered, setIsHovered] = useState(false);
+  const { preloadUrl, preloadedUrls, failedUrls, loadingUrls } = usePreloadUrl(`[${propertyId}]`);
+
+  useEffect(() => {
+    console.log(`[${propertyId}] Mount, képek száma:`, images.length);
+  }, [propertyId, images.length]);
+
+  // Csak az első kép előtöltése
+  useEffect(() => {
+    if (images.length > 0) {
+      const first = images[0]?.url;
+      preloadUrl(first, () => setLoadedImages(new Set([0])));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [images]);
+
+  // Hover esetén 3-4 kép előtöltése (egyszer)
+  const preloadOnHover = useCallback(() => {
+    if (isHovered || images.length <= 1) {
+      console.log(`[${propertyId}] Hover ignorálva (isHovered: ${isHovered}, images: ${images.length})`);
+      return;
+    }
+    setIsHovered(true);
+    const toPreload = images.slice(1, 5).map((im) => im.url);
+    console.log(`[${propertyId}] 🎯 Hover → előtöltés:`, toPreload);
+    toPreload.forEach((url, idx) =>
+      preloadUrl(url, () => setLoadedImages((prev) => new Set(prev).add(idx + 1)))
+    );
+  }, [isHovered, images, preloadUrl, propertyId]);
+
+  // Navigáláskor a következő kettőt előtöltjük
+  const preloadAdjacentImages = useCallback(
+    (currentIndex: number) => {
+      if (!images.length) return;
+      const nextIdx = (currentIndex + 1) % images.length;
+      const next2Idx = (currentIndex + 2) % images.length;
+      const list = [nextIdx, next2Idx];
+      console.log(`[${propertyId}] Navigáció → előtöltendő indexek:`, list);
+      list.forEach((i) => {
+        const url = images[i]?.url;
+        preloadUrl(url, () => setLoadedImages((prev) => new Set(prev).add(i)));
+      });
+    },
+    [images, preloadUrl, propertyId]
+  );
+
+  useEffect(() => {
+    console.log(`[${propertyId}] Állapot | loaded:`, Array.from(loadedImages).sort(),
+      ` preloaded:`, preloadedUrls.current.size,
+      ` loading:`, loadingUrls.current.size,
+      ` failed:`, failedUrls.current.size,
+    );
+  }, [loadedImages, failedUrls, loadingUrls, preloadedUrls, propertyId]);
+
+  return { loadedImages, preloadOnHover, preloadAdjacentImages, isHovered, failedUrls } as const;
+};
+
+// =============================
+// Optimized Property Card (1 <Image>)
+// =============================
 const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({ property, onClick }) => {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const [brokenUrls, setBrokenUrls] = useState<Set<string>>(new Set());
   const images = property.images || [];
+
+  const { loadedImages, preloadOnHover, preloadAdjacentImages, failedUrls } = useImagePreloader(images, property.id);
 
   const nextImage = (e: React.MouseEvent) => {
     e.stopPropagation();
-    setCurrentImageIndex((prev) => (prev + 1) % images.length);
+    if (images.length === 0) return;
+    const nextIndex = (currentImageIndex + 1) % images.length;
+    setCurrentImageIndex(nextIndex);
+    preloadAdjacentImages(nextIndex);
   };
 
   const prevImage = (e: React.MouseEvent) => {
     e.stopPropagation();
-    setCurrentImageIndex((prev) => (prev - 1 + images.length) % images.length);
+    if (images.length === 0) return;
+    const prevIndex = (currentImageIndex - 1 + images.length) % images.length;
+    setCurrentImageIndex(prevIndex);
+    preloadAdjacentImages(prevIndex);
   };
 
+  const placeholderImage = Placeholder;
+  
+  const current = images[currentImageIndex];
+  const currentUrl = current?.url || "";
+  const showPlaceholder = !currentUrl || brokenUrls.has(currentUrl) || failedUrls.current.has(currentUrl);
+
   return (
-    <div 
+    <div
       className="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition-all duration-300 cursor-pointer group"
       onClick={onClick}
+      onMouseEnter={preloadOnHover}
     >
-      {/* Image Carousel */}
-      <div className="relative h-64 overflow-hidden">
-        {images.length > 0 ? (
+      {/* Image area */}
+      <div className="relative h-64 overflow-hidden bg-gray-100">
+        <Image
+          key={showPlaceholder ? `ph-${currentImageIndex}` : current?.id}
+          src={showPlaceholder ? placeholderImage : currentUrl}
+          alt={`${property.type} in ${property.town}`}
+          fill
+          sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+          className="object-cover group-hover:scale-105 transition-transform duration-300"
+          priority={currentImageIndex === 0}
+          loading={currentImageIndex === 0 ? "eager" : "lazy"}
+          placeholder="blur"
+          blurDataURL="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAIElEQVQYV2NkYGD4z8DAwMgABYwMjIwMDAx+HwQAkgcGSWv8x4AAAAASUVORK5CYII="
+          onError={() => {
+            if (currentUrl) {
+              setBrokenUrls((prev) => {
+                const s = new Set(prev);
+                s.add(currentUrl);
+                return s;
+              });
+              console.error(`[${property.id}] next/image onError → placeholder:`, currentUrl);
+            }
+          }}
+        />
+
+        {/* Loading overlay, ha az aktuális még nem készült el */}
+        {!showPlaceholder && !loadedImages.has(currentImageIndex) && (
+          <div className="absolute inset-0 flex items-center justify-center z-20 bg-gray-100/70">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+          </div>
+        )}
+
+        {images.length > 1 && (
           <>
-            <Image
-              src={images[currentImageIndex]?.url}
-              placeholder='blur'
-              blurDataURL='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAIElEQVQYV2NkYGD4z8DAwMgABYwMjIwMDAx+HwQAkgcGSWv8x4AAAAASUVORK5CYII='
-              priority
-              width={500}
-              height={500}
-              alt={`${property.type} in ${property.town}`}
-              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-              onError={(e) => {
-                (e.target as HTMLImageElement).src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgdmlld0JveD0iMCAwIDQwMCAzMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSI0MDAiIGhlaWdodD0iMzAwIiBmaWxsPSIjRjNGNEY2Ii8+CjxwYXRoIGQ9Ik0xMDAgMTAwTDIwMCAyMDBMMzAwIDEwMEwzNTAgMTUwVjI1MEgxMDBWMTAwWiIgZmlsbD0iI0QxRDVEQiIvPgo8Y2lyY2xlIGN4PSIxNDAiIGN5PSIxMzAiIHI9IjIwIiBmaWxsPSIjRDFENURCIi8+Cjx0ZXh0IHg9IjIwMCIgeT0iMTUwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmaWxsPSIjOUM5Qzk2IiBmb250LXNpemU9IjE2Ij5ObyBJbWFnZTwvdGV4dD4KPHN2Zz4K';
-              }}
-            />
-            
-            {/* Image Navigation */}
-            {images.length > 1 && (
-              <>
-                <button
-                  onClick={prevImage}
-                  className="absolute left-2 top-1/2 transform -translate-y-1/2 bg-black bg-opacity-50 text-white p-2 rounded-full hover:bg-opacity-70 transition-opacity"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={nextImage}
-                  className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-black bg-opacity-50 text-white p-2 rounded-full hover:bg-opacity-70 transition-opacity"
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-                
-                {/* Image Dots */}
-                <div className="absolute bottom-2 left-1/2 transform -translate-x-1/2 flex space-x-1">
-                  {images.map((_, index) => (
-                    <div
-                      key={index}
-                      className={`w-2 h-2 rounded-full ${
-                        index === currentImageIndex ? 'bg-white' : 'bg-white bg-opacity-50'
-                      }`}
-                    />
-                  ))}
-                </div>
-              </>
-            )}
-            
-            {/* Property Type Badge */}
-            <div className="absolute top-3 left-3 bg-blue-600 text-white px-3 py-1 rounded-full text-sm font-medium">
-              {property.type}
-            </div>
-            
-            {/* New Build Badge */}
-            {property.new_build === 1 && (
-              <div className="absolute top-3 right-3 bg-green-600 text-white px-3 py-1 rounded-full text-sm font-medium">
-                Nueva construcción
-              </div>
-            )}
+            <button
+              onClick={prevImage}
+              className="absolute left-2 top-1/2 -translate-y-1/2 bg-black/50 text-white p-2 rounded-full hover:bg-black/70 transition-opacity z-20"
+              aria-label="Previous image"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <button
+              onClick={nextImage}
+              className="absolute right-2 top-1/2 -translate-y-1/2 bg-black/50 text-white p-2 rounded-full hover:bg-black/70 transition-opacity z-20"
+              aria-label="Next image"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
           </>
-        ) : (
-          <div className="w-full h-full bg-gray-200 flex items-center justify-center">
-            <span className="text-gray-500">Sin imagen</span>
+        )}
+
+        {/* Badges */}
+        <div className="absolute top-3 left-3 bg-blue-600 text-white px-3 py-1 rounded-full text-sm font-medium z-20">
+          {property.type}
+        </div>
+        {property.new_build === 1 && (
+          <div className="absolute top-3 right-3 bg-green-600 text-white px-3 py-1 rounded-full text-sm font-medium z-20">
+            Nueva construcción
           </div>
         )}
       </div>
 
-      {/* Property Info */}
+      {/* Info */}
       <div className="p-6">
-        {/* Price */}
         <div className="flex items-center justify-between mb-3">
           <div className="text-2xl font-bold text-blue-600">
             {property.formatted_price || `${property.price?.toLocaleString()} ${property.currency}`}
           </div>
-          <div className="text-sm text-gray-500">
-            Ref: {property.ref}
-          </div>
+          <div className="text-sm text-gray-500">Ref: {property.ref}</div>
         </div>
 
-        {/* Location */}
         <div className="flex items-center text-gray-600 mb-3">
-          <MapPin className="w-4 h-4 mr-2" />
-          <span className="text-sm">
+          <MapPin className="w-4 h-4 mr-2 flex-shrink-0" />
+          <span className="text-sm truncate">
             {property.location_detail && `${property.location_detail}, `}
             {property.town}, {property.province}
           </span>
         </div>
 
-        {/* Property Details */}
         <div className="flex items-center justify-between mb-4 text-gray-600">
           <div className="flex items-center">
             <Bed className="w-4 h-4 mr-1" />
@@ -154,21 +303,18 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({ p
           )}
         </div>
 
-        {/* Description Preview */}
         {property.description && (
           <p className="text-gray-600 text-sm mb-4 line-clamp-2">
             {property.description
-              .replace(/[🌊🏖️📍🛏️🛠️💰🏡🚶‍♂️✨~]/g, '')
-              .replace(/~/g, ' ')
-              .substring(0, 120)}...
+              .replace(/[🌊🏖️📍🛏️🛠️💰🏡🚶‍♂️✨~]/g, "")
+              .replace(/~/g, " ")
+              .substring(0, 120)}
+            ...
           </p>
         )}
 
-        {/* Agency Info */}
         <div className="flex items-center justify-between pt-4 border-t border-gray-100">
-          <div className="text-sm text-gray-600">
-            {property.agencia}
-          </div>
+          <div className="text-sm text-gray-600">{property.agencia}</div>
           <div className="flex items-center space-x-3">
             {property.pool === 1 && (
               <span className="text-blue-500 text-lg" title="Piscina">🏊‍♂️</span>
@@ -181,7 +327,208 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({ p
   );
 };
 
-// Search Filters Component
+// ========================
+// Global Image Preloader
+// ========================
+const useGlobalImagePreloader = (properties: Property[]) => {
+  const { preloadUrl } = usePreloadUrl(`[Global]`);
+
+  useEffect(() => {
+    if (!properties?.length) return;
+    const firstImages = properties
+      .slice(0, 24) // limitáljuk, ne terheljük túl
+      .map((p, idx) => ({ idx, url: p.images?.[0]?.url }))
+      .filter((x) => !!x.url) as { idx: number; url: string }[];
+
+    console.log(`[Global] Első képek előtöltése | darab:`, firstImages.length);
+
+    // egyszerű throttle: 6-os csomagokban
+    const chunkSize = 6;
+    const chunks: { idx: number; url: string }[][] = [];
+    for (let i = 0; i < firstImages.length; i += chunkSize) {
+      chunks.push(firstImages.slice(i, i + chunkSize));
+    }
+
+    (async () => {
+      for (const chunk of chunks) {
+        await Promise.all(
+          chunk.map(({ url, idx }) =>
+            new Promise<void>((resolve) => {
+              preloadUrl(url, () => {
+                console.log(`[Global] ✅ Property ${idx} első kép kész:`, url);
+                resolve();
+              }, () => {
+                console.warn(`[Global] ❌ Property ${idx} első kép hiba:`, url);
+                resolve();
+              });
+            })
+          )
+        );
+      }
+      console.log(`[Global] Előtöltés vége.`);
+    })();
+  }, [properties, preloadUrl]);
+};
+
+// ========================
+// Main Component
+// ========================
+const ServerSidePropertyLanding: React.FC<{ initialResult: PropertySearchResult }> = ({ initialResult }) => {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [isPending, startTransition] = useTransition();
+
+  const [searchResult, setSearchResult] = useState<PropertySearchResult>(initialResult);
+  const [filters, setFilters] = useState<PropertySearchParams>({
+    page: parseInt(searchParams.get("page") || "1"),
+    limit: 12,
+    type: searchParams.get("type") || undefined,
+    town: searchParams.get("town") || undefined,
+    minPrice: searchParams.get("minPrice") ? parseInt(searchParams.get("minPrice")!) : undefined,
+    maxPrice: searchParams.get("maxPrice") ? parseInt(searchParams.get("maxPrice")!) : undefined,
+    minBeds: searchParams.get("minBeds") ? parseInt(searchParams.get("minBeds")!) : undefined,
+    pool: searchParams.get("pool") ? searchParams.get("pool") === "true" : null,
+  });
+
+  const performSearch = useCallback(
+    async (newFilters: PropertySearchParams) => {
+      console.log("🔍 Server search →", newFilters);
+
+      startTransition(async () => {
+        try {
+          const result = await searchProperties(newFilters);
+          setSearchResult(result);
+
+          const params = new URLSearchParams();
+          Object.entries(newFilters).forEach(([key, value]) => {
+            if (value !== undefined && value !== null && value !== "") {
+              params.set(key, String(value));
+            }
+          });
+          const newUrl = `${window.location.pathname}?${params.toString()}`;
+          window.history.replaceState({}, "", newUrl);
+
+          window.scrollTo({ top: 0, behavior: "smooth" });
+
+          // az új eredményt egy picit megpöccintjük: az első képeket megkérjük a cache-nek
+          result.properties.slice(0, 12).forEach((p, i) => {
+            const u = p.images?.[0]?.url;
+            if (u) {
+              const img = new window.Image();
+              img.decoding = "async";
+              img.src = u;
+            }
+          });
+        } catch (error) {
+          console.error("Search error:", error);
+        }
+      });
+    },
+    []
+  );
+
+  const handleFiltersChange = useCallback(
+    (newFilters: PropertySearchParams) => {
+      console.log("🔄 Filters changed:", newFilters);
+      setFilters(newFilters);
+      performSearch(newFilters);
+    },
+    [performSearch]
+  );
+
+  const handlePageChange = useCallback(
+    (page: number) => {
+      const newFilters = { ...filters, page };
+      handleFiltersChange(newFilters);
+    },
+    [filters, handleFiltersChange]
+  );
+
+  const handlePropertyClick = (property: Property) => {
+    const slug = generateSlug(property);
+    router.push(`/properties/${slug}`);
+  };
+
+  const { properties, pagination } = searchResult;
+  const { availableTypes, availableTowns } = searchResult.filters;
+
+  useGlobalImagePreloader(properties);
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <div className="bg-white shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 py-6">
+          <h1 className="text-3xl font-bold text-gray-800">Propiedades en España</h1>
+          <p className="text-gray-600 mt-2">Encuentra tu propiedad ideal - {pagination.totalItems} propiedades disponibles</p>
+        </div>
+      </div>
+
+      <div className="max-w-7xl mx-auto px-4 py-8">
+        {/* Filters */}
+        <SearchFilters
+          filters={filters}
+          availableTypes={availableTypes}
+          availableTowns={availableTowns}
+          onFiltersChange={handleFiltersChange}
+          isLoading={isPending}
+        />
+
+        {isPending && (
+          <div className="flex items-center justify-center py-8">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mr-3"></div>
+            <span className="text-gray-600">Buscando propiedades...</span>
+          </div>
+        )}
+
+        {!isPending && (
+          <div className="mb-6 flex justify-between items-center">
+            <p className="text-gray-600">
+              Mostrando {(pagination.currentPage - 1) * pagination.limit + 1}-
+              {Math.min(pagination.currentPage * pagination.limit, pagination.totalItems)} de {pagination.totalItems} propiedades
+            </p>
+            <div className="text-sm text-gray-500">Página {pagination.currentPage} de {pagination.totalPages}</div>
+          </div>
+        )}
+
+        {properties.length > 0 ? (
+          <>
+            <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 ${isPending ? "opacity-50" : ""}`}>
+              {properties.map((property) => (
+                <PropertyCard key={property.id} property={property} onClick={() => handlePropertyClick(property)} />
+              ))}
+            </div>
+
+            {pagination.totalPages > 1 && (
+              <Pagination
+                currentPage={pagination.currentPage}
+                totalPages={pagination.totalPages}
+                onPageChange={handlePageChange}
+                isLoading={isPending}
+              />
+            )}
+          </>
+        ) : !isPending ? (
+          <div className="text-center py-12">
+            <div className="text-gray-400 text-6xl mb-4">🏠</div>
+            <h3 className="text-xl font-semibold text-gray-700 mb-2">No se encontraron propiedades</h3>
+            <p className="text-gray-500 mb-4">Intenta ajustar los filtros para ver más resultados</p>
+            <button
+              onClick={() => handleFiltersChange({ page: 1, limit: 12 })}
+              className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              Ver todas las propiedades
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+};
+
+// ========================
+// Filters & Pagination (változatlan)
+// ========================
 const SearchFilters: React.FC<{
   filters: PropertySearchParams;
   availableTypes: string[];
@@ -189,21 +536,18 @@ const SearchFilters: React.FC<{
   onFiltersChange: (filters: PropertySearchParams) => void;
   isLoading: boolean;
 }> = ({ filters, availableTypes, availableTowns, onFiltersChange, isLoading }) => {
-  const handleFilterChange = (key: keyof PropertySearchParams, value: string | number | boolean | null | undefined) => {
-    const newFilters: PropertySearchParams = { ...filters, page: 1 }; // Reset to page 1 on filter change
-    
-    if (key === 'type' || key === 'town') {
-      newFilters[key] = value as string | undefined;
-    } else if (key === 'minPrice' || key === 'maxPrice' || key === 'minBeds' || key === 'page' || key === 'limit') {
-      newFilters[key] = value as number | undefined;
-    } else if (key === 'pool') {
-      newFilters[key] = value as boolean | null;
-    } else if (key === 'sortBy') {
-      newFilters[key] = value as 'price' | 'date' | 'beds' | undefined;
-    } else if (key === 'sortOrder') {
-      newFilters[key] = value as 'asc' | 'desc' | undefined;
-    }
-    
+  const handleFilterChange = (
+    key: keyof PropertySearchParams,
+    value: string | number | boolean | null | undefined
+  ) => {
+    const newFilters: PropertySearchParams = { ...filters, page: 1 };
+
+    if (key === "type" || key === "town") newFilters[key] = value as string | undefined;
+    else if (key === "minPrice" || key === "maxPrice" || key === "minBeds" || key === "page" || key === "limit") newFilters[key] = value as number | undefined;
+    else if (key === "pool") newFilters[key] = value as boolean | null;
+    else if (key === "sortBy") newFilters[key] = value as "price" | "date" | "beds" | undefined;
+    else if (key === "sortOrder") newFilters[key] = value as "asc" | "desc" | undefined;
+
     onFiltersChange(newFilters);
   };
 
@@ -218,36 +562,32 @@ const SearchFilters: React.FC<{
           <Search className="w-5 h-5 mr-2" />
           Filtros de búsqueda
         </h2>
-        <button
-          onClick={clearFilters}
-          className="text-blue-600 hover:text-blue-700 text-sm"
-          disabled={isLoading}
-        >
+        <button onClick={clearFilters} className="text-blue-600 hover:text-blue-700 text-sm" disabled={isLoading}>
           Limpiar filtros
         </button>
       </div>
-      
+
       <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
         <select
-          value={filters.type || ''}
-          onChange={(e) => handleFilterChange('type', e.target.value || undefined)}
+          value={filters.type || ""}
+          onChange={(e) => handleFilterChange("type", e.target.value || undefined)}
           className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
           disabled={isLoading}
         >
           <option value="">Todos los tipos</option>
-          {availableTypes.map(type => (
+          {availableTypes.map((type) => (
             <option key={type} value={type}>{type}</option>
           ))}
         </select>
 
         <select
-          value={filters.town || ''}
-          onChange={(e) => handleFilterChange('town', e.target.value || undefined)}
+          value={filters.town || ""}
+          onChange={(e) => handleFilterChange("town", e.target.value || undefined)}
           className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
           disabled={isLoading}
         >
           <option value="">Todas las ciudades</option>
-          {availableTowns.map(town => (
+          {availableTowns.map((town) => (
             <option key={town} value={town}>{town}</option>
           ))}
         </select>
@@ -255,8 +595,8 @@ const SearchFilters: React.FC<{
         <input
           type="number"
           placeholder="Precio mín."
-          value={filters.minPrice || ''}
-          onChange={(e) => handleFilterChange('minPrice', e.target.value ? parseInt(e.target.value) : undefined)}
+          value={filters.minPrice || ""}
+          onChange={(e) => handleFilterChange("minPrice", e.target.value ? parseInt(e.target.value) : undefined)}
           className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
           disabled={isLoading}
         />
@@ -264,15 +604,15 @@ const SearchFilters: React.FC<{
         <input
           type="number"
           placeholder="Precio máx."
-          value={filters.maxPrice || ''}
-          onChange={(e) => handleFilterChange('maxPrice', e.target.value ? parseInt(e.target.value) : undefined)}
+          value={filters.maxPrice || ""}
+          onChange={(e) => handleFilterChange("maxPrice", e.target.value ? parseInt(e.target.value) : undefined)}
           className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
           disabled={isLoading}
         />
 
         <select
-          value={filters.minBeds || ''}
-          onChange={(e) => handleFilterChange('minBeds', e.target.value ? parseInt(e.target.value) : undefined)}
+          value={filters.minBeds || ""}
+          onChange={(e) => handleFilterChange("minBeds", e.target.value ? parseInt(e.target.value) : undefined)}
           className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
           disabled={isLoading}
         >
@@ -284,10 +624,10 @@ const SearchFilters: React.FC<{
         </select>
 
         <select
-          value={filters.pool === null || filters.pool === undefined ? '' : filters.pool ? 'yes' : 'no'}
+          value={filters.pool === null || filters.pool === undefined ? "" : filters.pool ? "yes" : "no"}
           onChange={(e) => {
             const value = e.target.value;
-            handleFilterChange('pool', value === '' ? null : value === 'yes');
+            handleFilterChange("pool", value === "" ? null : value === "yes");
           }}
           className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
           disabled={isLoading}
@@ -301,7 +641,6 @@ const SearchFilters: React.FC<{
   );
 };
 
-// Pagination Component
 const Pagination: React.FC<{
   currentPage: number;
   totalPages: number;
@@ -309,212 +648,39 @@ const Pagination: React.FC<{
   isLoading: boolean;
 }> = ({ currentPage, totalPages, onPageChange, isLoading }) => {
   const getPageNumbers = () => {
-    const pages = [];
+    const pages = [] as number[];
     const maxVisible = 5;
-    
+
     let start = Math.max(1, currentPage - Math.floor(maxVisible / 2));
     const end = Math.min(totalPages, start + maxVisible - 1);
-    
-    if (end - start + 1 < maxVisible) {
-      start = Math.max(1, end - maxVisible + 1);
-    }
-    
-    for (let i = start; i <= end; i++) {
-      pages.push(i);
-    }
-    
+
+    if (end - start + 1 < maxVisible) start = Math.max(1, end - maxVisible + 1);
+
+    for (let i = start; i <= end; i++) pages.push(i);
+
     return pages;
   };
 
   return (
     <div className="flex items-center justify-center space-x-2 mt-8">
-      <button
-        onClick={() => onPageChange(currentPage - 1)}
-        disabled={currentPage === 1 || isLoading}
-        className="p-2 rounded-lg border disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
-      >
+      <button onClick={() => onPageChange(currentPage - 1)} disabled={currentPage === 1 || isLoading} className="p-2 rounded-lg border disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50">
         <ChevronLeft className="w-5 h-5" />
       </button>
-      
+
       {getPageNumbers().map((page) => (
         <button
           key={page}
           onClick={() => onPageChange(page)}
           disabled={isLoading}
-          className={`px-4 py-2 rounded-lg ${
-            page === currentPage
-              ? 'bg-blue-600 text-white'
-              : 'border hover:bg-gray-50 disabled:opacity-50'
-          }`}
+          className={`px-4 py-2 rounded-lg ${page === currentPage ? "bg-blue-600 text-white" : "border hover:bg-gray-50 disabled:opacity-50"}`}
         >
           {page}
         </button>
       ))}
-      
-      <button
-        onClick={() => onPageChange(currentPage + 1)}
-        disabled={currentPage === totalPages || isLoading}
-        className="p-2 rounded-lg border disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
-      >
+
+      <button onClick={() => onPageChange(currentPage + 1)} disabled={currentPage === totalPages || isLoading} className="p-2 rounded-lg border disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50">
         <ChevronRight className="w-5 h-5" />
       </button>
-    </div>
-  );
-};
-
-// Main Component with Server-side search
-const ServerSidePropertyLanding: React.FC<{ initialResult: PropertySearchResult }> = ({ 
-  initialResult 
-}) => {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const [isPending, startTransition] = useTransition();
-  
-  const [searchResult, setSearchResult] = useState<PropertySearchResult>(initialResult);
-  const [filters, setFilters] = useState<PropertySearchParams>({
-    page: parseInt(searchParams.get('page') || '1'),
-    limit: 12,
-    type: searchParams.get('type') || undefined,
-    town: searchParams.get('town') || undefined,
-    minPrice: searchParams.get('minPrice') ? parseInt(searchParams.get('minPrice')!) : undefined,
-    maxPrice: searchParams.get('maxPrice') ? parseInt(searchParams.get('maxPrice')!) : undefined,
-    minBeds: searchParams.get('minBeds') ? parseInt(searchParams.get('minBeds')!) : undefined,
-    pool: searchParams.get('pool') ? searchParams.get('pool') === 'true' : null,
-  });
-
-  // Perform server search when filters change
-  const performSearch = useCallback(async (newFilters: PropertySearchParams) => {
-    console.log('🔍 Performing server search with filters:', newFilters);
-    
-    startTransition(async () => {
-      try {
-        const result = await searchProperties(newFilters);
-        setSearchResult(result);
-        
-        // Update URL with search params
-        const params = new URLSearchParams();
-        Object.entries(newFilters).forEach(([key, value]) => {
-          if (value !== undefined && value !== null && value !== '') {
-            params.set(key, value.toString());
-          }
-        });
-        
-        const newUrl = `${window.location.pathname}?${params.toString()}`;
-        window.history.replaceState({}, '', newUrl);
-        
-        // Scroll to top after search
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-        
-      } catch (error) {
-        console.error('Search error:', error);
-      }
-    });
-  }, []);
-
-  const handleFiltersChange = useCallback((newFilters: PropertySearchParams) => {
-    console.log('🔄 Filters changed:', newFilters);
-    setFilters(newFilters);
-    performSearch(newFilters);
-  }, [performSearch]);
-
-  const handlePageChange = useCallback((page: number) => {
-    const newFilters = { ...filters, page };
-    handleFiltersChange(newFilters);
-  }, [filters, handleFiltersChange]);
-
-  const handlePropertyClick = (property: Property) => {
-    const slug = generateSlug(property);
-    router.push(`/properties/${slug}`);
-  };
-
-  const { properties, pagination } = searchResult;
-  const { availableTypes, availableTowns } = searchResult.filters;
-
-  return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-white shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 py-6">
-          <h1 className="text-3xl font-bold text-gray-800">
-            Propiedades en España
-          </h1>
-          <p className="text-gray-600 mt-2">
-            Encuentra tu propiedad ideal - {pagination.totalItems} propiedades disponibles
-          </p>
-        </div>
-      </div>
-
-      <div className="max-w-7xl mx-auto px-4 py-8">
-        {/* Search Filters */}
-        <SearchFilters
-          filters={filters}
-          availableTypes={availableTypes}
-          availableTowns={availableTowns}
-          onFiltersChange={handleFiltersChange}
-          isLoading={isPending}
-        />
-
-        {/* Loading State */}
-        {isPending && (
-          <div className="flex items-center justify-center py-8">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mr-3"></div>
-            <span className="text-gray-600">Buscando propiedades...</span>
-          </div>
-        )}
-
-        {/* Results Summary */}
-        {!isPending && (
-          <div className="mb-6 flex justify-between items-center">
-            <p className="text-gray-600">
-              Mostrando {((pagination.currentPage - 1) * pagination.limit) + 1}-{Math.min(pagination.currentPage * pagination.limit, pagination.totalItems)} de {pagination.totalItems} propiedades
-            </p>
-            <div className="text-sm text-gray-500">
-              Página {pagination.currentPage} de {pagination.totalPages}
-            </div>
-          </div>
-        )}
-
-        {/* Properties Grid */}
-        {properties.length > 0 ? (
-          <>
-            <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 ${isPending ? 'opacity-50' : ''}`}>
-              {properties.map((property) => (
-                <PropertyCard
-                  key={property.id}
-                  property={property}
-                  onClick={() => handlePropertyClick(property)}
-                />
-              ))}
-            </div>
-
-            {/* Pagination */}
-            {pagination.totalPages > 1 && (
-              <Pagination
-                currentPage={pagination.currentPage}
-                totalPages={pagination.totalPages}
-                onPageChange={handlePageChange}
-                isLoading={isPending}
-              />
-            )}
-          </>
-        ) : !isPending ? (
-          <div className="text-center py-12">
-            <div className="text-gray-400 text-6xl mb-4">🏠</div>
-            <h3 className="text-xl font-semibold text-gray-700 mb-2">
-              No se encontraron propiedades
-            </h3>
-            <p className="text-gray-500 mb-4">
-              Intenta ajustar los filtros para ver más resultados
-            </p>
-            <button
-              onClick={() => handleFiltersChange({ page: 1, limit: 12 })}
-              className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              Ver todas las propiedades
-            </button>
-          </div>
-        ) : null}
-      </div>
     </div>
   );
 };
