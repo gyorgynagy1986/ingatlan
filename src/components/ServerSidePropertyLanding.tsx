@@ -50,6 +50,8 @@ const generateSlug = (property: Property) => {
 // ======================================
 // Ha nem állítottál egyedit, ez a default deviceSizes
 const DEVICE_SIZES = [640, 750, 828, 1080, 1200, 1920, 2048, 3840];
+// fix target css width for cards (px) – egyezzen a <Image sizes>-szel
+const CARD_CSS_WIDTH = 400;
 
 const pickWidth = (targetCssPx: number) => {
   const dpr = Math.max(1, Math.min(3, Math.round(window.devicePixelRatio || 1)));
@@ -121,15 +123,20 @@ const usePreloadUrl = (label: string) => {
 // ==========================
 // Image Preloader Hook (Card)
 // ==========================
-// getWidth: függvény, ami visszaadja az aktuális megjelenített kép konténerének CSS-szélességét px-ben
 const useImagePreloader = (
   images: { id: string; url: string }[],
-  propertyId: string,
-  getWidth: () => number
+  propertyId: string
 ) => {
   const [loadedImages, setLoadedImages] = useState<Set<number>>(new Set());
   const [isHovered, setIsHovered] = useState(false);
   const { preloadUrl, preloadedUrls, failedUrls, loadingUrls } = usePreloadUrl(`[${propertyId}]`);
+
+  const buildUrlForIndex = useCallback((idx: number) => {
+    const raw = images[idx]?.url;
+    if (!raw) return undefined;
+    const w = pickWidth(CARD_CSS_WIDTH);
+    return buildNextOptimizedUrl(raw, w);
+  }, [images]);
 
   useEffect(() => {
     console.log(`[${propertyId}] Mount, képek száma:`, images.length);
@@ -138,15 +145,13 @@ const useImagePreloader = (
   // Első kép – Next-optis URL-re preload, hogy lapozásnál cache-hit legyen
   useEffect(() => {
     if (images.length > 0) {
-      const firstRaw = images[0]?.url;
-      if (firstRaw) {
-        const w = pickWidth(getWidth() || 400);
-        const url = buildNextOptimizedUrl(firstRaw, w);
-        console.log(`[${propertyId}] ▶️ FIRST preload (w=${w})`, url);
+      const url = buildUrlForIndex(0);
+      if (url) {
+        console.log(`[${propertyId}] ▶️ FIRST preload`, url);
         preloadUrl(url, () => setLoadedImages(new Set([0])));
       }
     }
-  }, [images, preloadUrl, getWidth, propertyId]);
+  }, [images, preloadUrl, propertyId, buildUrlForIndex]);
 
   // Hover – a következő 3-4 képet ugyanazon Next-optis URL-lel töltjük
   const preloadOnHover = useCallback(() => {
@@ -155,31 +160,52 @@ const useImagePreloader = (
       return;
     }
     setIsHovered(true);
-    const w = pickWidth(getWidth() || 400);
-    const toPreload = images.slice(1, 5).map((im) => buildNextOptimizedUrl(im.url, w));
-    console.log(`[${propertyId}] 🎯 Hover → NEXT-preload (w=${w}):`, toPreload);
-    toPreload.forEach((url, idx) =>
-      preloadUrl(url, () => setLoadedImages((prev) => new Set(prev).add(idx + 1)))
+    const toPreloadIdx = [1, 2, 3, 4].filter((i) => i < images.length);
+    const urls = toPreloadIdx
+      .map((i) => buildUrlForIndex(i))
+      .filter(Boolean) as string[];
+    console.log(`[${propertyId}] 🎯 Hover → NEXT-preload:`, urls);
+    urls.forEach((url, k) =>
+      preloadUrl(url, () => setLoadedImages((prev) => new Set(prev).add(toPreloadIdx[k])))
     );
-  }, [isHovered, images, preloadUrl, propertyId, getWidth]);
+  }, [isHovered, images, preloadUrl, propertyId, buildUrlForIndex]);
 
-  // Navigáció – a következő kettőt NEXT-optis URL-lel	
+  // Ígéret: adott index legyen kész
+  const ensureLoaded = useCallback(
+    (index: number) =>
+      new Promise<void>((resolve) => {
+        if (loadedImages.has(index)) return resolve();
+        const url = buildUrlForIndex(index);
+        if (!url) return resolve();
+        preloadUrl(
+          url,
+          () => {
+            setLoadedImages((prev) => {
+              const s = new Set(prev);
+              s.add(index);
+              return s;
+            });
+            resolve();
+          },
+          () => resolve()
+        );
+      }),
+    [buildUrlForIndex, loadedImages, preloadUrl]
+  );
+
+  // Navigáció – a következő kettőt NEXT-optis URL-lel
   const preloadAdjacentImages = useCallback(
     (currentIndex: number) => {
       if (!images.length) return;
-      const w = pickWidth(getWidth() || 400);
       const nextIdx = (currentIndex + 1) % images.length;
       const next2Idx = (currentIndex + 2) % images.length;
       const list = [nextIdx, next2Idx];
-      console.log(`[${propertyId}] Navigáció → előtöltendő indexek (w=${w}):`, list);
+      console.log(`[${propertyId}] Navigáció → előtöltendő indexek:`, list);
       list.forEach((i) => {
-        const raw = images[i]?.url;
-        if (!raw) return;
-        const url = buildNextOptimizedUrl(raw, w);
-        preloadUrl(url, () => setLoadedImages((prev) => new Set(prev).add(i)));
+        void ensureLoaded(i);
       });
     },
-    [images, preloadUrl, propertyId, getWidth]
+    [images, propertyId, ensureLoaded]
   );
 
   useEffect(() => {
@@ -187,11 +213,18 @@ const useImagePreloader = (
       `[${propertyId}] Állapot | loaded:`, Array.from(loadedImages).sort(),
       ` preloaded:`, preloadedUrls.current.size,
       ` loading:`, loadingUrls.current.size,
-      ` failed:`, failedUrls.current.size,
+      ` failed:`, failedUrls.current.size
     );
   }, [loadedImages, failedUrls, loadingUrls, preloadedUrls, propertyId]);
 
-  return { loadedImages, preloadOnHover, preloadAdjacentImages, isHovered, failedUrls } as const;
+  return {
+    loadedImages,
+    preloadOnHover,
+    preloadAdjacentImages,
+    ensureLoaded,
+    isHovered,
+    failedUrls,
+  } as const;
 };
 
 // =============================
@@ -199,32 +232,47 @@ const useImagePreloader = (
 // =============================
 const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({ property, onClick }) => {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const [pendingIndex, setPendingIndex] = useState<number | null>(null);
+  const [isSwitching, setIsSwitching] = useState(false);
   const [brokenUrls, setBrokenUrls] = useState<Set<string>>(new Set());
   const images = property.images || [];
 
-  // konténer szélesség mérése a NEXT-optis preloadhoz
-  const imgWrapRef = useRef<HTMLDivElement>(null);
-  const getWidth = useCallback(() => imgWrapRef.current?.clientWidth || 400, []);
+  const { loadedImages, preloadOnHover, preloadAdjacentImages, ensureLoaded, failedUrls } =
+    useImagePreloader(images, property.id);
 
-  const { loadedImages, preloadOnHover, preloadAdjacentImages, failedUrls } = useImagePreloader(images, property.id, getWidth);
+  const goToIndex = useCallback(
+    async (index: number) => {
+      if (images.length === 0) return;
+      if (index === currentImageIndex) return;
+      setPendingIndex(index);
+      if (!loadedImages.has(index)) {
+        console.log(`[${property.id}] ⏳ Váltás előtt preload index=${index}`);
+        setIsSwitching(true); // blur az aktuálisra
+        await ensureLoaded(index);
+      }
+      setCurrentImageIndex(index);
+      setPendingIndex(null);
+      setIsSwitching(false);
+      preloadAdjacentImages(index);
+    },
+    [currentImageIndex, ensureLoaded, images.length, loadedImages, preloadAdjacentImages, property.id]
+  );
 
   const nextImage = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (images.length === 0) return;
     const nextIndex = (currentImageIndex + 1) % images.length;
-    setCurrentImageIndex(nextIndex);
-    preloadAdjacentImages(nextIndex);
+    void goToIndex(nextIndex);
   };
 
   const prevImage = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (images.length === 0) return;
     const prevIndex = (currentImageIndex - 1 + images.length) % images.length;
-    setCurrentImageIndex(prevIndex);
-    preloadAdjacentImages(prevIndex);
+    void goToIndex(prevIndex);
   };
 
-  // Használj public/placeholder.svg-t vagy .png-t
+  // public/placeholder.svg
   const placeholderImage = "/placeholder.svg";
 
   const current = images[currentImageIndex];
@@ -237,15 +285,15 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({ p
       onClick={onClick}
       onMouseEnter={preloadOnHover}
     >
-      <div ref={imgWrapRef} className="relative h-64 overflow-hidden bg-gray-100">
-        {/* FONTOS: nem használunk unoptimized-et – a Next saját URL-t fog kérni, amit előre betöltöttünk */}
+      <div className="relative h-64 overflow-hidden bg-gray-100">
+        {/* FONTOS: a Next saját URL-t fog kérni, amit előre betöltöttünk */}
         <Image
           key={showPlaceholder ? `ph-${currentImageIndex}` : current?.id}
           src={showPlaceholder ? placeholderImage : currentUrl}
           alt={`${property.type} in ${property.town}`}
           fill
-          sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
-          className="object-cover group-hover:scale-105 transition-transform duration-300"
+          sizes="400px"
+          className={`object-cover transition-transform duration-300 ${isSwitching ? 'blur-sm scale-105' : 'group-hover:scale-105'}`}
           priority={currentImageIndex === 0}
           loading={currentImageIndex === 0 ? "eager" : "lazy"}
           placeholder="blur"
@@ -262,11 +310,7 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({ p
           }}
         />
 
-        {!showPlaceholder && !loadedImages.has(currentImageIndex) && (
-          <div className="absolute inset-0 flex items-center justify-center z-20 bg-gray-100/70">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-          </div>
-        )}
+        {/* Nincs szürke overlay – az aktuális kép kap enyhe blur-t, amíg tölt a következő */}
 
         {images.length > 1 && (
           <>
@@ -355,7 +399,7 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({ p
 };
 
 // ========================
-// Global Image Preloader – opcionális: itt maradhat nyers URL, vagy megadhatsz fix szélességet
+// Global Image Preloader – opcionális: itt is NEXT-optis URL
 // ========================
 const useGlobalImagePreloader = (properties: Property[]) => {
   const { preloadUrl } = usePreloadUrl(`[Global]`);
@@ -380,16 +424,19 @@ const useGlobalImagePreloader = (properties: Property[]) => {
         await Promise.all(
           chunk.map(({ url, idx }) =>
             new Promise<void>((resolve) => {
-              // Konzisztencia kedvéért itt is lehet NEXT-optis URL-t kérni – tegyük fel 400px cél szélesség
-              const w = pickWidth(400);
+              const w = pickWidth(CARD_CSS_WIDTH);
               const nextUrl = buildNextOptimizedUrl(url, w);
-              preloadUrl(nextUrl, () => {
-                console.log(`[Global] ✅ Property ${idx} első kép kész (w=${w}):`, nextUrl);
-                resolve();
-              }, () => {
-                console.warn(`[Global] ❌ Property ${idx} első kép hiba:`, nextUrl);
-                resolve();
-              });
+              preloadUrl(
+                nextUrl,
+                () => {
+                  console.log(`[Global] ✅ Property ${idx} első kép kész (w=${w}):`, nextUrl);
+                  resolve();
+                },
+                () => {
+                  console.warn(`[Global] ❌ Property ${idx} első kép hiba:`, nextUrl);
+                  resolve();
+                }
+              );
             })
           )
         );
@@ -440,10 +487,10 @@ const ServerSidePropertyLanding: React.FC<{ initialResult: PropertySearchResult 
           window.scrollTo({ top: 0, behavior: "smooth" });
 
           // opcionális: első képek megpiszkálása (NEXT-optis URL)
-          result.properties.slice(0, 12).forEach((p, i) => {
+          result.properties.slice(0, 12).forEach((p) => {
             const raw = p.images?.[0]?.url;
             if (raw) {
-              const w = pickWidth(400);
+              const w = pickWidth(CARD_CSS_WIDTH);
               const u = buildNextOptimizedUrl(raw, w);
               const img = new window.Image();
               img.decoding = "async";
