@@ -127,6 +127,9 @@ async function handleDELETE(request, { params }) {
       );
     }
 
+    revalidatePath("/api/public/properties");
+    revalidateTag("properties");
+
     return NextResponse.json({
       success: true,
       message: "Property deleted successfully",
