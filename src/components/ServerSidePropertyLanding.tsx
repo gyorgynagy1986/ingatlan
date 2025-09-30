@@ -1016,8 +1016,9 @@ const generateSlug = (property: Property) => {
 /* ======================================
    Next/Image optimalizált preload helper
 ====================================== */
-const DEVICE_SIZES = [640, 750, 828, 1080, 1200, 1920, 2048, 3840];
-const CARD_CSS_WIDTH = 400;
+// Szűkített device sizes a layout alapján (kevesebb variáns -> olcsóbb)
+const DEVICE_SIZES = [384, 640, 768, 1200]
+const CARD_CSS_WIDTH = 400; // backup érték SSR-re is
 
 const pickWidth = (targetCssPx: number) => {
   if (typeof window === "undefined") return 640;
@@ -1035,45 +1036,63 @@ const pickWidth = (targetCssPx: number) => {
 const buildNextOptimizedUrl = (src: string, width: number, quality = 75) =>
   `/_next/image?url=${encodeURIComponent(src)}&w=${width}&q=${quality}`;
 
+// Dinamikus kártya szélesség detektálás (ResizeObserver)
+const useCardWidth = () => {
+  const [width, setWidth] = useState(CARD_CSS_WIDTH);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    const updateWidth = () => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 0) setWidth(Math.round(rect.width));
+    };
+
+    updateWidth();
+    const ro = new ResizeObserver(updateWidth);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  return { ref, width } as const;
+};
+
 /* ==========================================
-   FIX #1: Globális singleton cache (nem hook!)
+   Globális singleton preload cache
 ========================================== */
 class ImagePreloadCache {
   private preloadedUrls = new Set<string>();
   private failedUrls = new Set<string>();
   private loadingUrls = new Set<string>();
-  private maxCacheSize = 200; // FIX #2: Memory limit
+  private maxCacheSize = 200;
 
-  has(url: string): boolean {
+  has(url: string) {
     return this.preloadedUrls.has(url);
   }
-
-  hasFailed(url: string): boolean {
+  hasFailed(url: string) {
     return this.failedUrls.has(url);
   }
-
-  isLoading(url: string): boolean {
+  isLoading(url: string) {
     return this.loadingUrls.has(url);
   }
 
-  markLoading(url: string): void {
+  markLoading(url: string) {
     this.loadingUrls.add(url);
   }
-
-  markLoaded(url: string): void {
+  markLoaded(url: string) {
     this.loadingUrls.delete(url);
     this.preloadedUrls.add(url);
     this.trimCache();
   }
-
-  markFailed(url: string): void {
+  markFailed(url: string) {
     this.loadingUrls.delete(url);
     this.failedUrls.add(url);
     this.trimCache();
   }
 
-  // FIX #2: LRU-szerű cache trim (FIFO egyszerűség kedvéért)
-  private trimCache(): void {
+  private trimCache() {
     if (this.preloadedUrls.size > this.maxCacheSize) {
       const toDelete = Array.from(this.preloadedUrls).slice(
         0,
@@ -1090,8 +1109,6 @@ class ImagePreloadCache {
     }
   }
 }
-
-// Globális singleton instance
 const globalImageCache = new ImagePreloadCache();
 
 /* ==================
@@ -1107,37 +1124,27 @@ const usePreloadUrl = (label: string) => {
         return;
       }
       if (globalImageCache.hasFailed(url)) {
-        if (process.env.NODE_ENV === "development") {
+        if (process.env.NODE_ENV === "development")
           console.warn(`${label} ⛔ Korábbi hiba, skip:`, url);
-        }
         onErr?.();
         return;
       }
-      if (globalImageCache.isLoading(url)) {
-        return;
-      }
+      if (globalImageCache.isLoading(url)) return;
 
       globalImageCache.markLoading(url);
 
       const img = new window.Image();
       img.decoding = "async";
-
       img.onload = () => {
         globalImageCache.markLoaded(url);
         onOk?.();
       };
       img.onerror = (e) => {
         globalImageCache.markFailed(url);
-        // FIX #4: Production error tracking
-        if (process.env.NODE_ENV === "production") {
-          // Itt integrálhatod: Sentry.captureException, LogRocket, stb.
-          // window.errorTracker?.logImageError?.(url, e);
-        } else {
+        if (process.env.NODE_ENV === "development")
           console.error(`${label} ❌ Hiba:`, url, e);
-        }
         onErr?.();
       };
-
       img.src = url;
     },
     [label]
@@ -1182,9 +1189,7 @@ function useIsCoarsePointer() {
       return;
     try {
       setCoarse(window.matchMedia("(pointer: coarse)").matches);
-    } catch {
-      // silent fail
-    }
+    } catch {}
   }, []);
   return coarse;
 }
@@ -1194,7 +1199,8 @@ function useIsCoarsePointer() {
 ========================== */
 const useImagePreloader = (
   images: { id: string; url: string }[],
-  propertyId: string
+  propertyId: string,
+  cardWidth: number
 ) => {
   const [loadedImages, setLoadedImages] = useState<Set<number>>(new Set());
   const [isHovered, setIsHovered] = useState(false);
@@ -1208,9 +1214,7 @@ const useImagePreloader = (
     ) {
       try {
         isCoarseRef.current = window.matchMedia("(pointer: coarse)").matches;
-      } catch {
-        // silent fail
-      }
+      } catch {}
     }
   }, []);
 
@@ -1218,19 +1222,17 @@ const useImagePreloader = (
     (idx: number) => {
       const raw = images[idx]?.url;
       if (!raw) return undefined;
-      const w = pickWidth(CARD_CSS_WIDTH);
+      const w = pickWidth(cardWidth);
       return buildNextOptimizedUrl(raw, w);
     },
-    [images]
+    [images, cardWidth]
   );
 
   // első kép preload
   useEffect(() => {
     if (images.length > 0) {
       const url = buildUrlForIndex(0);
-      if (url) {
-        preloadUrl(url, () => setLoadedImages(new Set([0])));
-      }
+      if (url) preloadUrl(url, () => setLoadedImages(new Set([0])));
     }
   }, [images, preloadUrl, buildUrlForIndex]);
 
@@ -1299,6 +1301,8 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({
   property,
   onClick,
 }) => {
+  const { ref: measureRef, width: cardWidth } = useCardWidth();
+
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [isSwitching, setIsSwitching] = useState(false);
   const [brokenUrls, setBrokenUrls] = useState<Set<string>>(new Set());
@@ -1307,7 +1311,7 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({
 
   const images = property.images || [];
   const { loadedImages, preloadOnHover, preloadAdjacentImages, ensureLoaded } =
-    useImagePreloader(images, property.id);
+    useImagePreloader(images, property.id, cardWidth);
 
   const isCoarse = useIsCoarsePointer();
   const { ref: cardRef, visible } = useIsVisible<HTMLDivElement>({
@@ -1328,22 +1332,17 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({
   const goToIndex = useCallback(
     async (index: number) => {
       if (!images.length || index === currentImageIndex) return;
-
       const myToken = ++switchTokenRef.current;
       setIsSwitching(true);
-
       try {
-        if (!loadedImages.has(index)) {
-          await ensureLoaded(index);
-        }
+        if (!loadedImages.has(index)) await ensureLoaded(index);
         if (myToken === switchTokenRef.current) {
           setCurrentImageIndex(index);
           preloadAdjacentImages(index);
         }
       } catch (e) {
-        if (process.env.NODE_ENV === "development") {
+        if (process.env.NODE_ENV === "development")
           console.error("goToIndex error:", e);
-        }
       }
     },
     [
@@ -1357,17 +1356,14 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({
 
   const nextImage = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!images.length) return;
-    void goToIndex((currentImageIndex + 1) % images.length);
+    if (images.length) void goToIndex((currentImageIndex + 1) % images.length);
   };
-
   const prevImage = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!images.length) return;
-    void goToIndex((currentImageIndex - 1 + images.length) % images.length);
+    if (images.length)
+      void goToIndex((currentImageIndex - 1 + images.length) % images.length);
   };
 
-  // FIX #3: Fallback placeholder (data URL)
   const placeholderImage = useMemo(
     () =>
       "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='300'%3E%3Crect fill='%23f3f4f6' width='400' height='300'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dominant-baseline='middle' fill='%239ca3af' font-family='system-ui' font-size='24'%3ENo Image%3C/text%3E%3C/svg%3E",
@@ -1377,7 +1373,6 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({
   const current = images[currentImageIndex];
   const currentUrl = current?.url || "";
   const showPlaceholder = !currentUrl || brokenUrls.has(currentUrl);
-
   const isCurrentLoaded = loadedIndex.has(currentImageIndex);
 
   return (
@@ -1388,7 +1383,7 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({
       onMouseEnter={!isCoarse ? preloadOnHover : undefined}
       onTouchStart={isCoarse ? onFirstTouchStart : undefined}
     >
-      <div className="relative h-64 overflow-hidden bg-gray-100">
+      <div ref={measureRef} className="relative h-64 overflow-hidden">
         <Image
           key={`img-${property.id}-${currentImageIndex}-${
             showPlaceholder ? "ph" : "ok"
@@ -1396,7 +1391,11 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({
           src={showPlaceholder ? placeholderImage : currentUrl}
           alt={`${property.type} in ${property.town}`}
           fill
-          sizes="400px"
+          sizes="(max-width: 640px) 100vw,
+                 (max-width: 1024px) 50vw,
+                 (max-width: 1280px) 33vw,
+                 25vw"
+          quality={68}
           className={[
             "object-cover transition-transform duration-300 transition-opacity",
             isSwitching ? "scale-105" : "group-hover:scale-105",
@@ -1407,13 +1406,8 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({
           placeholder="blur"
           blurDataURL="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAIElEQVQYV2NkYGD4z8DAwMgABYwMjIwMDAx+HwQAkgcGSWv8x4AAAAASUVORK5CYII="
           onError={() => {
-            if (currentUrl) {
-              setBrokenUrls((prev) => {
-                const s = new Set(prev);
-                s.add(currentUrl);
-                return s;
-              });
-            }
+            if (currentUrl)
+              setBrokenUrls((prev) => new Set(prev).add(currentUrl));
             setIsSwitching(false);
             setLoadedIndex((prev) => {
               const s = new Set(prev);
@@ -1497,7 +1491,7 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({
         {property.description && (
           <p className="text-gray-600 text-sm mb-4 line-clamp-2">
             {property.description
-              .replace(/[\u{1F300}-\u{1F9FF}]/gu, "") // Minden emoji eltávolítása Unicode range-szel
+              .replace(/[\u{1F300}-\u{1F9FF}]/gu, "")
               .replace(/~/g, " ")
               .trim()
               .substring(0, 120)}
@@ -1595,15 +1589,15 @@ const ServerSidePropertyLanding: React.FC<{
 
           const params = new URLSearchParams();
           Object.entries(newFilters).forEach(([key, value]) => {
-            if (value !== undefined && value !== null && value !== "") {
+            if (value !== undefined && value !== null && value !== "")
               params.set(key, String(value));
-            }
           });
           const newUrl = `${window.location.pathname}?${params.toString()}`;
           window.history.replaceState({}, "", newUrl);
 
           window.scrollTo({ top: 0, behavior: "smooth" });
 
+          // melegítés
           result.properties.slice(0, 12).forEach((p) => {
             const raw = p.images?.[0]?.url;
             if (raw) {
@@ -1615,10 +1609,8 @@ const ServerSidePropertyLanding: React.FC<{
             }
           });
         } catch (error) {
-          if (process.env.NODE_ENV === "development") {
+          if (process.env.NODE_ENV === "development")
             console.error("Search error:", error);
-          }
-          // Production: errorTracker.logError(error)
         }
       });
     },
@@ -1915,16 +1907,12 @@ const Pagination: React.FC<{
   isLoading: boolean;
 }> = ({ currentPage, totalPages, onPageChange, isLoading }) => {
   const getPageNumbers = () => {
-    const pages = [] as number[];
+    const pages: number[] = [];
     const maxVisible = 5;
-
     let start = Math.max(1, currentPage - Math.floor(maxVisible / 2));
     const end = Math.min(totalPages, start + maxVisible - 1);
-
     if (end - start + 1 < maxVisible) start = Math.max(1, end - maxVisible + 1);
-
     for (let i = start; i <= end; i++) pages.push(i);
-
     return pages;
   };
 
