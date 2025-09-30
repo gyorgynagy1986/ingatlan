@@ -235,25 +235,37 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({ p
   const [pendingIndex, setPendingIndex] = useState<number | null>(null);
   const [isSwitching, setIsSwitching] = useState(false);
   const [brokenUrls, setBrokenUrls] = useState<Set<string>>(new Set());
-  const images = property.images || [];
+  const [loadedIndex, setLoadedIndex] = useState<Set<number>>(new Set([0])); // fade-inhez
+  const switchTokenRef = useRef(0); // versenyhelyzet ellen
 
-  const { loadedImages, preloadOnHover, preloadAdjacentImages, ensureLoaded, failedUrls } =
+  const images = property.images || [];
+  const { loadedImages, preloadOnHover, preloadAdjacentImages, ensureLoaded } =
     useImagePreloader(images, property.id);
 
   const goToIndex = useCallback(
     async (index: number) => {
       if (images.length === 0) return;
       if (index === currentImageIndex) return;
+
+      const myToken = ++switchTokenRef.current;
       setPendingIndex(index);
-      if (!loadedImages.has(index)) {
-        console.log(`[${property.id}] ⏳ Váltás előtt preload index=${index}`);
-        setIsSwitching(true); // blur az aktuálisra
-        await ensureLoaded(index);
+      setIsSwitching(true);
+
+      try {
+        if (!loadedImages.has(index)) {
+          console.log(`[${property.id}] ⏳ Váltás előtt preload index=${index}`);
+          await ensureLoaded(index);
+        }
+        if (myToken === switchTokenRef.current) {
+          setCurrentImageIndex(index);
+          setPendingIndex(null);
+          // isSwitching-et NEM itt kapcsoljuk ki — majd onLoadingComplete intézi,
+          // amikor a tényleges <img> betöltött.
+          preloadAdjacentImages(index);
+        }
+      } catch (e) {
+        console.error("goToIndex error:", e);
       }
-      setCurrentImageIndex(index);
-      setPendingIndex(null);
-      setIsSwitching(false);
-      preloadAdjacentImages(index);
     },
     [currentImageIndex, ensureLoaded, images.length, loadedImages, preloadAdjacentImages, property.id]
   );
@@ -277,7 +289,9 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({ p
 
   const current = images[currentImageIndex];
   const currentUrl = current?.url || "";
-  const showPlaceholder = !currentUrl || brokenUrls.has(currentUrl) || failedUrls.current.has(currentUrl);
+  const showPlaceholder = !currentUrl || brokenUrls.has(currentUrl);
+
+  const isCurrentLoaded = loadedIndex.has(currentImageIndex);
 
   return (
     <div
@@ -286,14 +300,17 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({ p
       onMouseEnter={preloadOnHover}
     >
       <div className="relative h-64 overflow-hidden bg-gray-100">
-        {/* FONTOS: a Next saját URL-t fog kérni, amit előre betöltöttünk */}
         <Image
-          key={showPlaceholder ? `ph-${currentImageIndex}` : current?.id}
+          key={`img-${property.id}-${currentImageIndex}-${showPlaceholder ? "ph" : "ok"}`}
           src={showPlaceholder ? placeholderImage : currentUrl}
           alt={`${property.type} in ${property.town}`}
           fill
           sizes="400px"
-          className={`object-cover transition-transform duration-300 ${isSwitching ? 'blur-sm scale-105' : 'group-hover:scale-105'}`}
+          className={[
+            "object-cover transition-transform duration-300 transition-opacity",
+            isSwitching ? "scale-105" : "group-hover:scale-105",
+            isCurrentLoaded ? "opacity-100" : "opacity-0"
+          ].join(" ")}
           priority={currentImageIndex === 0}
           loading={currentImageIndex === 0 ? "eager" : "lazy"}
           placeholder="blur"
@@ -307,10 +324,25 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({ p
               });
               console.error(`[${property.id}] next/image onError → placeholder:`, currentUrl);
             }
+            // ha hiba van, ne ragadjon a váltási állapot
+            setIsSwitching(false);
+            setLoadedIndex((prev) => {
+              const s = new Set(prev);
+              s.add(currentImageIndex);
+              return s;
+            });
+          }}
+          onLoadingComplete={() => {
+            // A ténylegesen renderelt példány készült el:
+            setLoadedIndex((prev) => {
+              const s = new Set(prev);
+              s.add(currentImageIndex);
+              return s;
+            });
+            // csak a legfrissebb váltásnál szüntessük meg az "átmenet" állapotot
+            setIsSwitching(false);
           }}
         />
-
-        {/* Nincs szürke overlay – az aktuális kép kap enyhe blur-t, amíg tölt a következő */}
 
         {images.length > 1 && (
           <>
