@@ -20,7 +20,9 @@ import {
   Property,
 } from "../lib/action/getPublicData";
 
-// Generate slug function
+/* =========================
+   Helper: slug generator
+========================= */
 const generateSlug = (property: Property) => {
   const cleanText = (text: string) =>
     text
@@ -34,9 +36,7 @@ const generateSlug = (property: Property) => {
 
   const typeSlug = cleanText(property.type);
   const townSlug = cleanText(property.town);
-  const locationSlug = property.location_detail
-    ? cleanText(property.location_detail)
-    : "";
+  const locationSlug = property.location_detail ? cleanText(property.location_detail) : "";
 
   const slugParts = [typeSlug, townSlug];
   if (locationSlug) slugParts.push(locationSlug);
@@ -45,9 +45,9 @@ const generateSlug = (property: Property) => {
   return slugParts.join("-").replace(/--+/g, "-");
 };
 
-// ======================================
-// Next/Image optimalizált preload helper
-// ======================================
+/* ======================================
+   Next/Image optimalizált preload helper
+====================================== */
 // Ha nem állítottál egyedit, ez a default deviceSizes
 const DEVICE_SIZES = [640, 750, 828, 1080, 1200, 1920, 2048, 3840];
 // fix target css width for cards (px) – egyezzen a <Image sizes>-szel
@@ -62,9 +62,9 @@ const pickWidth = (targetCssPx: number) => {
 const buildNextOptimizedUrl = (src: string, width: number, quality = 75) =>
   `/_next/image?url=${encodeURIComponent(src)}&w=${width}&q=${quality}`;
 
-// ===============
-// Preload helpers
-// ===============
+/* ==================
+   Preload cache hook
+================== */
 const useUrlPreloadCaches = () => {
   const preloadedUrls = useRef<Set<string>>(new Set());
   const failedUrls = useRef<Set<string>>(new Set());
@@ -79,22 +79,21 @@ const usePreloadUrl = (label: string) => {
     (url?: string | null, onOk?: () => void, onErr?: () => void) => {
       if (!url) return;
       if (preloadedUrls.current.has(url)) {
-        console.log(`${label} ✅ Cache-hit (ugyanaz az URL):`, url);
+        // console.log(`${label} ✅ Cache-hit`, url);
         onOk?.();
         return;
       }
       if (failedUrls.current.has(url)) {
-        console.warn(`${label} ⛔ Korábbi hiba, nem próbáljuk újra:`, url);
+        console.warn(`${label} ⛔ Korábbi hiba, skip:`, url);
         onErr?.();
         return;
       }
       if (loadingUrls.current.has(url)) {
-        console.log(`${label} ⏳ Már töltés alatt:`, url);
+        // console.log(`${label} ⏳ Már töltés alatt:`, url);
         return;
       }
 
       loadingUrls.current.add(url);
-      console.log(`${label} ▶️ Előtöltés indul:`, url);
 
       const img = new window.Image();
       img.decoding = "async";
@@ -102,7 +101,6 @@ const usePreloadUrl = (label: string) => {
       img.onload = () => {
         preloadedUrls.current.add(url);
         loadingUrls.current.delete(url);
-        console.log(`${label} ✅ Betöltve:`, url);
         onOk?.();
       };
       img.onerror = (e) => {
@@ -120,9 +118,48 @@ const usePreloadUrl = (label: string) => {
   return { preloadUrl, preloadedUrls, failedUrls, loadingUrls } as const;
 };
 
-// ==========================
-// Image Preloader Hook (Card)
-// ==========================
+/* ===========================
+   UX helpers (4 opció része)
+=========================== */
+// #2: Láthatóság figyelése (IntersectionObserver)
+function useIsVisible<T extends HTMLElement>(opts?: { threshold?: number }) {
+  const ref = useRef<T | null>(null);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        const e = entries[0];
+        if (e?.isIntersecting) setVisible(true);
+      },
+      { threshold: opts?.threshold ?? 0.5 }
+    );
+
+    io.observe(el);
+    return () => io.disconnect();
+  }, [opts?.threshold]);
+
+  return { ref, visible } as const;
+}
+
+// #3: Coarse pointer detektálása (mobil/tablet)
+function useIsCoarsePointer() {
+  const [coarse, setCoarse] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia === "undefined") return;
+    try {
+      setCoarse(window.matchMedia("(pointer: coarse)").matches);
+    } catch {}
+  }, []);
+  return coarse;
+}
+
+/* ==========================
+   Image Preloader Hook (Card)
+========================== */
 const useImagePreloader = (
   images: { id: string; url: string }[],
   propertyId: string
@@ -131,44 +168,47 @@ const useImagePreloader = (
   const [isHovered, setIsHovered] = useState(false);
   const { preloadUrl, preloadedUrls, failedUrls, loadingUrls } = usePreloadUrl(`[${propertyId}]`);
 
-  const buildUrlForIndex = useCallback((idx: number) => {
-    const raw = images[idx]?.url;
-    if (!raw) return undefined;
-    const w = pickWidth(CARD_CSS_WIDTH);
-    return buildNextOptimizedUrl(raw, w);
-  }, [images]);
-
+  // #4 mobil-optimalizálás: kevesebbet töltsünk előre
+  const isCoarseRef = useRef(false);
   useEffect(() => {
-    console.log(`[${propertyId}] Mount, képek száma:`, images.length);
-  }, [propertyId, images.length]);
+    if (typeof window !== "undefined" && typeof window.matchMedia !== "undefined") {
+      try {
+        isCoarseRef.current = window.matchMedia("(pointer: coarse)").matches;
+      } catch {}
+    }
+  }, []);
 
-  // Első kép – Next-optis URL-re preload, hogy lapozásnál cache-hit legyen
+  const buildUrlForIndex = useCallback(
+    (idx: number) => {
+      const raw = images[idx]?.url;
+      if (!raw) return undefined;
+      const w = pickWidth(CARD_CSS_WIDTH);
+      return buildNextOptimizedUrl(raw, w);
+    },
+    [images]
+  );
+
+  // első kép preload (NEXT-opt URL-re) – cache-hit miatt
   useEffect(() => {
     if (images.length > 0) {
       const url = buildUrlForIndex(0);
       if (url) {
-        console.log(`[${propertyId}] ▶️ FIRST preload`, url);
         preloadUrl(url, () => setLoadedImages(new Set([0])));
       }
     }
-  }, [images, preloadUrl, propertyId, buildUrlForIndex]);
+  }, [images, preloadUrl, buildUrlForIndex]);
 
-  // Hover – a következő 3-4 képet ugyanazon Next-optis URL-lel töltjük
+  // Hover / láthatóság / touch által hívható idempotens preload
   const preloadOnHover = useCallback(() => {
-    if (isHovered || images.length <= 1) {
-      console.log(`[${propertyId}] Hover ignorálva (isHovered: ${isHovered}, images: ${images.length})`);
-      return;
-    }
+    if (isHovered || images.length <= 1) return;
     setIsHovered(true);
-    const toPreloadIdx = [1, 2, 3, 4].filter((i) => i < images.length);
-    const urls = toPreloadIdx
-      .map((i) => buildUrlForIndex(i))
-      .filter(Boolean) as string[];
-    console.log(`[${propertyId}] 🎯 Hover → NEXT-preload:`, urls);
+    const maxAhead = isCoarseRef.current ? 2 : 4; // #4: mobilon 2, desktopon 4
+    const toPreloadIdx = Array.from({ length: maxAhead }, (_, k) => k + 1).filter((i) => i < images.length);
+    const urls = toPreloadIdx.map((i) => buildUrlForIndex(i)).filter(Boolean) as string[];
     urls.forEach((url, k) =>
       preloadUrl(url, () => setLoadedImages((prev) => new Set(prev).add(toPreloadIdx[k])))
     );
-  }, [isHovered, images, preloadUrl, propertyId, buildUrlForIndex]);
+  }, [isHovered, images, preloadUrl, buildUrlForIndex]);
 
   // Ígéret: adott index legyen kész
   const ensureLoaded = useCallback(
@@ -199,89 +239,91 @@ const useImagePreloader = (
       if (!images.length) return;
       const nextIdx = (currentIndex + 1) % images.length;
       const next2Idx = (currentIndex + 2) % images.length;
-      const list = [nextIdx, next2Idx];
-      console.log(`[${propertyId}] Navigáció → előtöltendő indexek:`, list);
-      list.forEach((i) => {
-        void ensureLoaded(i);
-      });
+      [nextIdx, next2Idx].forEach((i) => void ensureLoaded(i));
     },
-    [images, propertyId, ensureLoaded]
+    [images, ensureLoaded]
   );
 
   useEffect(() => {
-    console.log(
-      `[${propertyId}] Állapot | loaded:`, Array.from(loadedImages).sort(),
-      ` preloaded:`, preloadedUrls.current.size,
-      ` loading:`, loadingUrls.current.size,
-      ` failed:`, failedUrls.current.size
-    );
-  }, [loadedImages, failedUrls, loadingUrls, preloadedUrls, propertyId]);
+    // debug logok igény szerint visszakapcsolhatók
+    // console.log(`[${propertyId}] loaded:`, Array.from(loadedImages).sort());
+  }, [loadedImages, propertyId]);
 
   return {
     loadedImages,
-    preloadOnHover,
-    preloadAdjacentImages,
+    preloadOnHover,           // desktop: hover; mobil: touch/visibility is hívja
+    preloadAdjacentImages,    // lapozás után szomszédok
     ensureLoaded,
-    isHovered,
     failedUrls,
   } as const;
 };
 
-// =============================
-// Optimized Property Card (1 <Image>)
-// =============================
+/* ==================================
+   Property Card (1 <Image>, fade-in)
+================================== */
 const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({ property, onClick }) => {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
-  const [pendingIndex, setPendingIndex] = useState<number | null>(null);
   const [isSwitching, setIsSwitching] = useState(false);
   const [brokenUrls, setBrokenUrls] = useState<Set<string>>(new Set());
   const [loadedIndex, setLoadedIndex] = useState<Set<number>>(new Set([0])); // fade-inhez
-  const switchTokenRef = useRef(0); // versenyhelyzet ellen
+  const switchTokenRef = useRef(0); // #1: versenyhelyzet ellen
 
   const images = property.images || [];
-  const { loadedImages, preloadOnHover, preloadAdjacentImages, ensureLoaded } =
-    useImagePreloader(images, property.id);
+  const {
+    loadedImages,
+    preloadOnHover,
+    preloadAdjacentImages,
+    ensureLoaded,
+  } = useImagePreloader(images, property.id);
+
+  // #2/#3: láthatóság + touch fallback
+  const isCoarse = useIsCoarsePointer();
+  const { ref: cardRef, visible } = useIsVisible<HTMLDivElement>({ threshold: 0.5 });
+  const touchPreloadedRef = useRef(false);
+
+  useEffect(() => {
+    if (visible) preloadOnHover(); // láthatóvá váláskor egyszer tűzel (mobilon is)
+  }, [visible, preloadOnHover]);
+
+  const onFirstTouchStart = useCallback(() => {
+    if (touchPreloadedRef.current) return;
+    touchPreloadedRef.current = true;
+    preloadOnHover(); // első érintésre
+  }, [preloadOnHover]);
 
   const goToIndex = useCallback(
     async (index: number) => {
-      if (images.length === 0) return;
-      if (index === currentImageIndex) return;
+      if (!images.length || index === currentImageIndex) return;
 
       const myToken = ++switchTokenRef.current;
-      setPendingIndex(index);
       setIsSwitching(true);
 
       try {
         if (!loadedImages.has(index)) {
-          console.log(`[${property.id}] ⏳ Váltás előtt preload index=${index}`);
           await ensureLoaded(index);
         }
         if (myToken === switchTokenRef.current) {
           setCurrentImageIndex(index);
-          setPendingIndex(null);
-          // isSwitching-et NEM itt kapcsoljuk ki — majd onLoadingComplete intézi,
-          // amikor a tényleges <img> betöltött.
+          // isSwitching-et NEM itt kapcsoljuk ki — majd onLoadingComplete intézi
           preloadAdjacentImages(index);
         }
       } catch (e) {
         console.error("goToIndex error:", e);
       }
     },
-    [currentImageIndex, ensureLoaded, images.length, loadedImages, preloadAdjacentImages, property.id]
+    [currentImageIndex, ensureLoaded, images.length, loadedImages, preloadAdjacentImages]
   );
 
   const nextImage = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (images.length === 0) return;
-    const nextIndex = (currentImageIndex + 1) % images.length;
-    void goToIndex(nextIndex);
+    if (!images.length) return;
+    void goToIndex((currentImageIndex + 1) % images.length);
   };
 
   const prevImage = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (images.length === 0) return;
-    const prevIndex = (currentImageIndex - 1 + images.length) % images.length;
-    void goToIndex(prevIndex);
+    if (!images.length) return;
+    void goToIndex((currentImageIndex - 1 + images.length) % images.length);
   };
 
   // public/placeholder.svg
@@ -295,9 +337,11 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({ p
 
   return (
     <div
+      ref={cardRef}
       className="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition-all duration-300 cursor-pointer group"
       onClick={onClick}
-      onMouseEnter={preloadOnHover}
+      onMouseEnter={!isCoarse ? preloadOnHover : undefined}
+      onTouchStart={isCoarse ? onFirstTouchStart : undefined}
     >
       <div className="relative h-64 overflow-hidden bg-gray-100">
         <Image
@@ -322,9 +366,7 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({ p
                 s.add(currentUrl);
                 return s;
               });
-              console.error(`[${property.id}] next/image onError → placeholder:`, currentUrl);
             }
-            // ha hiba van, ne ragadjon a váltási állapot
             setIsSwitching(false);
             setLoadedIndex((prev) => {
               const s = new Set(prev);
@@ -333,14 +375,12 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({ p
             });
           }}
           onLoadingComplete={() => {
-            // A ténylegesen renderelt példány készült el:
             setLoadedIndex((prev) => {
               const s = new Set(prev);
               s.add(currentImageIndex);
               return s;
             });
-            // csak a legfrissebb váltásnál szüntessük meg az "átmenet" állapotot
-            setIsSwitching(false);
+            setIsSwitching(false); // #1: blur/átmenet vége csak a ténylegesen betöltött példány után
           }}
         />
 
@@ -430,9 +470,9 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({ p
   );
 };
 
-// ========================
-// Global Image Preloader – opcionális: itt is NEXT-optis URL
-// ========================
+/* ========================
+   Global Image Preloader
+======================== */
 const useGlobalImagePreloader = (properties: Property[]) => {
   const { preloadUrl } = usePreloadUrl(`[Global]`);
 
@@ -443,8 +483,6 @@ const useGlobalImagePreloader = (properties: Property[]) => {
       .map((p, idx) => ({ idx, url: p.images?.[0]?.url }))
       .filter((x) => !!x.url) as { idx: number; url: string }[];
 
-    console.log(`[Global] Első képek előtöltése | darab:`, firstImages.length);
-
     const chunkSize = 6;
     const chunks: { idx: number; url: string }[][] = [];
     for (let i = 0; i < firstImages.length; i += chunkSize) {
@@ -454,33 +492,22 @@ const useGlobalImagePreloader = (properties: Property[]) => {
     (async () => {
       for (const chunk of chunks) {
         await Promise.all(
-          chunk.map(({ url, idx }) =>
+          chunk.map(({ url }) =>
             new Promise<void>((resolve) => {
               const w = pickWidth(CARD_CSS_WIDTH);
               const nextUrl = buildNextOptimizedUrl(url, w);
-              preloadUrl(
-                nextUrl,
-                () => {
-                  console.log(`[Global] ✅ Property ${idx} első kép kész (w=${w}):`, nextUrl);
-                  resolve();
-                },
-                () => {
-                  console.warn(`[Global] ❌ Property ${idx} első kép hiba:`, nextUrl);
-                  resolve();
-                }
-              );
+              preloadUrl(nextUrl, resolve, resolve);
             })
           )
         );
       }
-      console.log(`[Global] Előtöltés vége.`);
     })();
   }, [properties, preloadUrl]);
 };
 
-// ========================
-// Main Component
-// ========================
+/* ===============
+   Main Component
+=============== */
 const ServerSidePropertyLanding: React.FC<{ initialResult: PropertySearchResult }> = ({ initialResult }) => {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -500,8 +527,6 @@ const ServerSidePropertyLanding: React.FC<{ initialResult: PropertySearchResult 
 
   const performSearch = useCallback(
     async (newFilters: PropertySearchParams) => {
-      console.log("🔍 Server search →", newFilters);
-
       startTransition(async () => {
         try {
           const result = await searchProperties(newFilters);
@@ -518,7 +543,7 @@ const ServerSidePropertyLanding: React.FC<{ initialResult: PropertySearchResult 
 
           window.scrollTo({ top: 0, behavior: "smooth" });
 
-          // opcionális: első képek megpiszkálása (NEXT-optis URL)
+          // opcionális: első képek megpiszkálása (NEXT-opt URL)
           result.properties.slice(0, 12).forEach((p) => {
             const raw = p.images?.[0]?.url;
             if (raw) {
@@ -539,7 +564,6 @@ const ServerSidePropertyLanding: React.FC<{ initialResult: PropertySearchResult 
 
   const handleFiltersChange = useCallback(
     (newFilters: PropertySearchParams) => {
-      console.log("🔄 Filters changed:", newFilters);
       setFilters(newFilters);
       performSearch(newFilters);
     },
@@ -636,9 +660,9 @@ const ServerSidePropertyLanding: React.FC<{ initialResult: PropertySearchResult 
   );
 };
 
-// ========================
-// Filters & Pagination (változatlan)
-// ========================
+/* ========================
+   Filters & Pagination
+======================== */
 const SearchFilters: React.FC<{
   filters: PropertySearchParams;
   availableTypes: string[];
