@@ -1016,9 +1016,8 @@ const generateSlug = (property: Property) => {
 /* ======================================
    Next/Image optimalizált preload helper
 ====================================== */
-// Szűkített device sizes a layout alapján (kevesebb variáns -> olcsóbb)
-const DEVICE_SIZES = [384, 640, 768, 1200]
-const CARD_CSS_WIDTH = 400; // backup érték SSR-re is
+const DEVICE_SIZES = [384, 640, 768, 1200];
+const CARD_CSS_WIDTH = 400;
 
 const pickWidth = (targetCssPx: number) => {
   if (typeof window === "undefined") return 640;
@@ -1036,7 +1035,6 @@ const pickWidth = (targetCssPx: number) => {
 const buildNextOptimizedUrl = (src: string, width: number, quality = 75) =>
   `/_next/image?url=${encodeURIComponent(src)}&w=${width}&q=${quality}`;
 
-// Dinamikus kártya szélesség detektálás (ResizeObserver)
 const useCardWidth = () => {
   const [width, setWidth] = useState(CARD_CSS_WIDTH);
   const ref = useRef<HTMLDivElement>(null);
@@ -1228,7 +1226,6 @@ const useImagePreloader = (
     [images, cardWidth]
   );
 
-  // első kép preload
   useEffect(() => {
     if (images.length > 0) {
       const url = buildUrlForIndex(0);
@@ -1304,6 +1301,7 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({
   const { ref: measureRef, width: cardWidth } = useCardWidth();
 
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const [displayImageIndex, setDisplayImageIndex] = useState(0);
   const [isSwitching, setIsSwitching] = useState(false);
   const [brokenUrls, setBrokenUrls] = useState<Set<string>>(new Set());
   const [loadedIndex, setLoadedIndex] = useState<Set<number>>(new Set([0]));
@@ -1343,6 +1341,7 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({
       } catch (e) {
         if (process.env.NODE_ENV === "development")
           console.error("goToIndex error:", e);
+        setIsSwitching(false);
       }
     },
     [
@@ -1358,6 +1357,7 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({
     e.stopPropagation();
     if (images.length) void goToIndex((currentImageIndex + 1) % images.length);
   };
+
   const prevImage = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (images.length)
@@ -1371,8 +1371,11 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({
   );
 
   const current = images[currentImageIndex];
+  const display = images[displayImageIndex];
   const currentUrl = current?.url || "";
-  const showPlaceholder = !currentUrl || brokenUrls.has(currentUrl);
+  const displayUrl = display?.url || "";
+  const showCurrentPlaceholder = !currentUrl || brokenUrls.has(currentUrl);
+  const showDisplayPlaceholder = !displayUrl || brokenUrls.has(displayUrl);
   const isCurrentLoaded = loadedIndex.has(currentImageIndex);
 
   return (
@@ -1383,12 +1386,33 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({
       onMouseEnter={!isCoarse ? preloadOnHover : undefined}
       onTouchStart={isCoarse ? onFirstTouchStart : undefined}
     >
-      <div ref={measureRef} className="relative h-64 overflow-hidden">
+      <div
+        ref={measureRef}
+        className="relative h-64 overflow-hidden bg-gray-100"
+      >
+        {/* Régi kép - fade out */}
+        {displayImageIndex !== currentImageIndex && !showDisplayPlaceholder && (
+          <Image
+            key={`img-old-${property.id}-${displayImageIndex}`}
+            src={displayUrl}
+            alt={`${property.type} in ${property.town}`}
+            fill
+            sizes="(max-width: 640px) 100vw,
+                   (max-width: 1024px) 50vw,
+                   (max-width: 1280px) 33vw,
+                   25vw"
+            quality={68}
+            className="object-cover transition-opacity duration-300"
+            priority={false}
+          />
+        )}
+
+        {/* Új kép - fade in */}
         <Image
-          key={`img-${property.id}-${currentImageIndex}-${
-            showPlaceholder ? "ph" : "ok"
+          key={`img-new-${property.id}-${currentImageIndex}-${
+            showCurrentPlaceholder ? "ph" : "ok"
           }`}
-          src={showPlaceholder ? placeholderImage : currentUrl}
+          src={showCurrentPlaceholder ? placeholderImage : currentUrl}
           alt={`${property.type} in ${property.town}`}
           fill
           sizes="(max-width: 640px) 100vw,
@@ -1397,9 +1421,11 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({
                  25vw"
           quality={68}
           className={[
-            "object-cover transition-transform duration-300 transition-opacity",
-            isSwitching ? "scale-105" : "group-hover:scale-105",
-            isCurrentLoaded ? "opacity-100" : "opacity-0",
+            "object-cover transition-all duration-300",
+            "group-hover:scale-105",
+            isCurrentLoaded && currentImageIndex === displayImageIndex
+              ? "opacity-100"
+              : "opacity-0",
           ].join(" ")}
           priority={currentImageIndex === 0}
           loading={currentImageIndex === 0 ? "eager" : "lazy"}
@@ -1409,18 +1435,11 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({
             if (currentUrl)
               setBrokenUrls((prev) => new Set(prev).add(currentUrl));
             setIsSwitching(false);
-            setLoadedIndex((prev) => {
-              const s = new Set(prev);
-              s.add(currentImageIndex);
-              return s;
-            });
+            setLoadedIndex((prev) => new Set(prev).add(currentImageIndex));
           }}
           onLoadingComplete={() => {
-            setLoadedIndex((prev) => {
-              const s = new Set(prev);
-              s.add(currentImageIndex);
-              return s;
-            });
+            setLoadedIndex((prev) => new Set(prev).add(currentImageIndex));
+            setDisplayImageIndex(currentImageIndex);
             setIsSwitching(false);
           }}
         />
@@ -1597,7 +1616,6 @@ const ServerSidePropertyLanding: React.FC<{
 
           window.scrollTo({ top: 0, behavior: "smooth" });
 
-          // melegítés
           result.properties.slice(0, 12).forEach((p) => {
             const raw = p.images?.[0]?.url;
             if (raw) {
@@ -1782,7 +1800,7 @@ const SearchFilters: React.FC<{
   };
 
   return (
-    <div className="bg-white p-6 rounded-lg shadow-sm mb-8">
+    <div className="bgRetryGEdit-white p-6 rounded-lg shadow-sm mb-8">
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-lg font-semibold flex items-center">
           <Search className="w-5 h-5 mr-2" />
@@ -1796,7 +1814,6 @@ const SearchFilters: React.FC<{
           Limpiar filtros
         </button>
       </div>
-
       <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
         <select
           value={filters.type || ""}
@@ -1899,7 +1916,6 @@ const SearchFilters: React.FC<{
     </div>
   );
 };
-
 const Pagination: React.FC<{
   currentPage: number;
   totalPages: number;
@@ -1915,7 +1931,6 @@ const Pagination: React.FC<{
     for (let i = start; i <= end; i++) pages.push(i);
     return pages;
   };
-
   return (
     <div className="flex items-center justify-center space-x-2 mt-8">
       <button
@@ -1925,7 +1940,6 @@ const Pagination: React.FC<{
       >
         <ChevronLeft className="w-5 h-5" />
       </button>
-
       {getPageNumbers().map((page) => (
         <button
           key={page}
@@ -1951,5 +1965,4 @@ const Pagination: React.FC<{
     </div>
   );
 };
-
 export default ServerSidePropertyLanding;
