@@ -460,7 +460,6 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({
           </div>
           <div className="text-sm text-gray-500">Ref: {property.ref}</div>
         </div>
-
         <div className="flex items-center text-gray-600 mb-3">
           <MapPin className="w-4 h-4 mr-2 flex-shrink-0" />
           <span className="text-sm truncate">
@@ -468,7 +467,6 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({
             {property.town}, {property.province}
           </span>
         </div>
-
         <div className="flex items-center justify-between mb-4 text-gray-600">
           <div className="flex items-center">
             <Bed className="w-4 h-4 mr-1" />
@@ -489,13 +487,16 @@ const PropertyCard: React.FC<{ property: Property; onClick: () => void }> = ({
         {property.description && (
           <p className="text-gray-600 text-sm mb-4 line-clamp-2">
             {property.description
-              .replace(/[🌊🏖️📍🛏️🛠️💰🏡🚶‍♂️✨~]/g, "")
+              .replace(
+                /[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{1F000}-\u{1F02F}]|[\u{1F0A0}-\u{1F0FF}]|[\u{1F100}-\u{1F64F}]|[\u{1F680}-\u{1F6FF}]|[\u{1F900}-\u{1F9FF}]|[\u{2190}-\u{21FF}]|[\u{2300}-\u{23FF}]|[\u{25A0}-\u{25FF}]|[\u{2B00}-\u{2BFF}]|[\u{3000}-\u{303F}]|[\u{3200}-\u{32FF}]/gu,
+                ""
+              )
               .replace(/~/g, " ")
+              .trim()
               .substring(0, 120)}
             ...
           </p>
         )}
-
         <div className="flex items-center justify-between pt-4 border-t border-gray-100">
           <div className="text-sm text-gray-600">{property.agencia}</div>
           <div className="flex items-center space-x-3">
@@ -956,4 +957,3 @@ const Pagination: React.FC<{
 };
 
 export default ServerSidePropertyLanding;
-
